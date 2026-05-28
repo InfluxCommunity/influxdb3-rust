@@ -1,0 +1,76 @@
+[package]
+name = "influxdb3-client"
+version = "0.1.0"
+edition = "2021"
+description = "Rust client for InfluxDB 3 Core and Enterprise"
+license = "MIT"
+keywords = ["influxdb", "time-series", "database", "arrow", "flight"]
+categories = ["database", "api-bindings"]
+
+[lib]
+name = "influxdb3_client"
+path = "src/lib.rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP client (rustls — no system OpenSSL dependency)
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "stream",
+    "gzip",
+    "rustls-tls",
+] }
+
+# Arrow + Flight (gRPC query transport)
+arrow        = { version = "53", features = ["ipc"] }
+arrow-array  = "53"
+arrow-schema = "53"
+arrow-flight = { version = "53", features = ["tls"] }
+
+# gRPC transport
+tonic = { version = "0.12", features = ["tls", "tls-roots"] }
+
+# Serialization
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+thiserror = "2"
+
+# Utilities
+chrono       = { version = "0.4", features = ["serde"] }
+bytes        = "1"
+futures-util = "0.3"
+url          = "2"
+flate2       = "1"
+indexmap     = "2"
+itoa         = "1"
+ryu          = "1"
+polars = { version = "0.53.0", default-features = false, features = ["dtype-datetime", "dtype-date", "ipc"], optional = true }
+
+[dev-dependencies]
+tokio   = { version = "1", features = ["full", "test-util", "rt-multi-thread"] }
+mockito = "1"
+
+[[example]]
+name = "write"
+path = "examples/write.rs"
+
+[[example]]
+name = "query"
+path = "examples/query.rs"
+
+[[example]]
+name = "write_dataframe"
+path = "examples/write_dataframe.rs"
+required-features = ["polars"]
+
+[[example]]
+name = "cloud_dedicated"
+path = "examples/cloud_dedicated.rs"
+
+[features]
+polars = ["dep:polars"]
+
