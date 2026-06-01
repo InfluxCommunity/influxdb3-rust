@@ -9,19 +9,30 @@ use influxdb3_client::query::{extract_value, QueryResult, Value};
 
 fn make_batch() -> RecordBatch {
     let schema = Arc::new(Schema::new(vec![
-        Field::new("time", DataType::Timestamp(TimeUnit::Nanosecond, None), false),
+        Field::new(
+            "time",
+            DataType::Timestamp(TimeUnit::Nanosecond, None),
+            false,
+        ),
         Field::new("host", DataType::Utf8, false),
         Field::new("usage", DataType::Float64, false),
         Field::new("count", DataType::Int64, false),
         Field::new("active", DataType::Boolean, false),
     ]));
-    RecordBatch::try_new(schema, vec![
-        Arc::new(TimestampNanosecondArray::from(vec![1_700_000_000_000_000_000_i64, 1_700_000_001_000_000_000_i64])),
-        Arc::new(StringArray::from(vec!["srv1", "srv2"])),
-        Arc::new(Float64Array::from(vec![42.5, 13.7])),
-        Arc::new(Int64Array::from(vec![100_i64, 200_i64])),
-        Arc::new(BooleanArray::from(vec![true, false])),
-    ]).unwrap()
+    RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(TimestampNanosecondArray::from(vec![
+                1_700_000_000_000_000_000_i64,
+                1_700_000_001_000_000_000_i64,
+            ])),
+            Arc::new(StringArray::from(vec!["srv1", "srv2"])),
+            Arc::new(Float64Array::from(vec![42.5, 13.7])),
+            Arc::new(Int64Array::from(vec![100_i64, 200_i64])),
+            Arc::new(BooleanArray::from(vec![true, false])),
+        ],
+    )
+    .unwrap()
 }
 
 #[test]
@@ -55,12 +66,27 @@ fn iteration() {
 #[test]
 fn value_api() {
     // Type extraction across Arrow array types.
-    assert_eq!(extract_value(&Int64Array::from(vec![None as Option<i64>]), 0), Value::Null);
-    assert_eq!(extract_value(&Float64Array::from(vec![3.14]), 0), Value::F64(3.14));
-    assert_eq!(extract_value(&StringArray::from(vec!["x"]), 0), Value::String("x".into()));
-    assert_eq!(extract_value(&BooleanArray::from(vec![true]), 0), Value::Bool(true));
     assert_eq!(
-        extract_value(&TimestampNanosecondArray::from(vec![1_700_000_000_000_000_000_i64]), 0),
+        extract_value(&Int64Array::from(vec![None as Option<i64>]), 0),
+        Value::Null
+    );
+    assert_eq!(
+        extract_value(&Float64Array::from(vec![2.5]), 0),
+        Value::F64(2.5)
+    );
+    assert_eq!(
+        extract_value(&StringArray::from(vec!["x"]), 0),
+        Value::String("x".into())
+    );
+    assert_eq!(
+        extract_value(&BooleanArray::from(vec![true]), 0),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        extract_value(
+            &TimestampNanosecondArray::from(vec![1_700_000_000_000_000_000_i64]),
+            0
+        ),
         Value::Timestamp(1_700_000_000_000_000_000),
     );
 
@@ -75,4 +101,13 @@ fn value_api() {
     assert_eq!(format!("{}", Value::I64(42)), "42");
     assert_eq!(format!("{}", Value::String("hi".into())), "hi");
     assert_eq!(format!("{}", Value::Null), "null");
+
+    // InfluxDB 3 returns tag columns as Dictionary(Int32, Utf8); the row value
+    // must be the underlying string, not a debug dump of the column.
+    use arrow_array::DictionaryArray;
+    let dict: DictionaryArray<arrow_array::types::Int32Type> =
+        vec!["us-east", "us-west", "us-east"].into_iter().collect();
+    assert_eq!(extract_value(&dict, 0), Value::String("us-east".into()));
+    assert_eq!(extract_value(&dict, 1), Value::String("us-west".into()));
+    assert_eq!(extract_value(&dict, 2), Value::String("us-east".into()));
 }

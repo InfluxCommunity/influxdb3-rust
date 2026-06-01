@@ -3,19 +3,19 @@ use std::fmt;
 use std::ops::Index;
 use std::sync::Arc;
 
-use arrow_array::RecordBatch;
 use arrow_array::array::{
-    Array, BooleanArray, Float32Array, Float64Array,
-    Int8Array, Int16Array, Int32Array, Int64Array,
-    UInt8Array, UInt16Array, UInt32Array, UInt64Array,
-    StringArray, BinaryArray, LargeStringArray,
-    TimestampNanosecondArray, TimestampMicrosecondArray,
-    TimestampMillisecondArray, TimestampSecondArray,
+    Array, BinaryArray, BooleanArray, Decimal128Array, Decimal256Array, DictionaryArray,
+    Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array, LargeStringArray,
+    StringArray, TimestampMicrosecondArray, TimestampMillisecondArray, TimestampNanosecondArray,
+    TimestampSecondArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
 };
+use arrow_array::types::{
+    Int16Type, Int32Type, Int64Type, Int8Type, UInt16Type, UInt32Type, UInt64Type, UInt8Type,
+};
+use arrow_array::RecordBatch;
 use arrow_schema::SchemaRef;
 
 use crate::error::Error;
-
 
 /// Selects the query language used for a query operation.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -23,7 +23,7 @@ pub enum QueryType {
     /// Standard SQL (default)
     #[default]
     Sql,
-    /// InfluxQL — the InfluxDB 1.x query language
+    /// InfluxQL, the InfluxDB 1.x query language
     InfluxQL,
 }
 
@@ -36,13 +36,11 @@ impl QueryType {
     }
 }
 
-
 /// Named query parameters for parameterised SQL / InfluxQL statements.
 ///
 /// Prefer chaining `.param("k", v)` on [`crate::QueryRequest`]; use this type
 /// directly when you need to assemble parameters dynamically.
 pub type QueryParameters = HashMap<String, serde_json::Value>;
-
 
 /// Options controlling a single query operation.
 #[derive(Debug, Clone, Default)]
@@ -51,7 +49,6 @@ pub struct QueryOptions {
     /// Extra gRPC metadata headers sent with the Flight DoGet request.
     pub headers: HashMap<String, String>,
 }
-
 
 /// A dynamically typed value extracted from a query result row.
 #[derive(Debug, Clone, PartialEq)]
@@ -92,7 +89,7 @@ impl Value {
             Value::I64(v) => Some(*v),
             Value::I32(v) => Some(*v as i64),
             Value::I16(v) => Some(*v as i64),
-            Value::I8(v)  => Some(*v as i64),
+            Value::I8(v) => Some(*v as i64),
             Value::Timestamp(v) => Some(*v),
             _ => None,
         }
@@ -120,31 +117,30 @@ impl Value {
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Value::Bool(v)      => write!(f, "{v}"),
-            Value::I8(v)        => write!(f, "{v}"),
-            Value::I16(v)       => write!(f, "{v}"),
-            Value::I32(v)       => write!(f, "{v}"),
-            Value::I64(v)       => write!(f, "{v}"),
-            Value::U8(v)        => write!(f, "{v}"),
-            Value::U16(v)       => write!(f, "{v}"),
-            Value::U32(v)       => write!(f, "{v}"),
-            Value::U64(v)       => write!(f, "{v}"),
-            Value::F32(v)       => write!(f, "{v}"),
-            Value::F64(v)       => write!(f, "{v}"),
-            Value::String(v)    => f.write_str(v),
-            Value::Binary(v)    => write!(f, "{}b", v.len()),
+            Value::Bool(v) => write!(f, "{v}"),
+            Value::I8(v) => write!(f, "{v}"),
+            Value::I16(v) => write!(f, "{v}"),
+            Value::I32(v) => write!(f, "{v}"),
+            Value::I64(v) => write!(f, "{v}"),
+            Value::U8(v) => write!(f, "{v}"),
+            Value::U16(v) => write!(f, "{v}"),
+            Value::U32(v) => write!(f, "{v}"),
+            Value::U64(v) => write!(f, "{v}"),
+            Value::F32(v) => write!(f, "{v}"),
+            Value::F64(v) => write!(f, "{v}"),
+            Value::String(v) => f.write_str(v),
+            Value::Binary(v) => write!(f, "{}b", v.len()),
             Value::Timestamp(v) => write!(f, "{v}"),
-            Value::Null         => f.write_str("null"),
+            Value::Null => f.write_str("null"),
         }
     }
 }
-
 
 /// A single row from a query result.
 ///
 /// Holds the raw `Vec<Value>` (one slot per column) and a shared index mapping
 /// column names to slot positions.  Lookup by name is O(1) via the shared
-/// `Arc<HashMap>` — no per-row allocations during iteration.
+/// `Arc<HashMap>`, so iteration allocates no per-row map.
 #[derive(Debug, Clone)]
 pub struct Row {
     values: Vec<Value>,
@@ -182,14 +178,10 @@ impl Row {
         self.values.is_empty()
     }
 
-    /// Convert to a `HashMap<String, Value>` — primarily for callers that need
-    /// the old map-shaped API.  Allocates one HashMap and clones every key.
+    /// Convert to a `HashMap<String, Value>` for callers that prefer map-shaped
+    /// rows.  Allocates one HashMap and clones every column name.
     pub fn into_map(self) -> HashMap<String, Value> {
-        self.columns
-            .iter()
-            .cloned()
-            .zip(self.values)
-            .collect()
+        self.columns.iter().cloned().zip(self.values).collect()
     }
 }
 
@@ -208,8 +200,7 @@ impl Index<usize> for Row {
     }
 }
 
-
-/// The complete result of a query — a collection of Arrow [`RecordBatch`]es.
+/// The complete result of a query: a collection of Arrow [`RecordBatch`]es.
 ///
 /// Use `for row in result` (yields [`Row`]) for row-oriented access, or
 /// [`QueryResult::record_batches()`] for direct Arrow access.
@@ -239,7 +230,11 @@ impl QueryResult {
 
     /// Column names in schema order.
     pub fn column_names(&self) -> Vec<&str> {
-        self.schema.fields().iter().map(|f| f.name().as_str()).collect()
+        self.schema
+            .fields()
+            .iter()
+            .map(|f| f.name().as_str())
+            .collect()
     }
 
     /// Collect all rows into a `Vec<Row>`.
@@ -247,20 +242,20 @@ impl QueryResult {
         self.into_iter().collect()
     }
 
-    /// Collect all rows into a `Vec<HashMap<String, Value>>` — convenience for
-    /// callers that want map-shaped rows.
-    pub fn row_maps(self) -> Result<Vec<HashMap<String, Value>>, Error> {
-        self.into_iter().map(|r| r.map(Row::into_map)).collect()
-    }
-
     /// Convert the query result to a polars [`DataFrame`].
     ///
     /// Requires the `polars` Cargo feature.
+    ///
+    /// Note: this serialises the batches to Arrow IPC and reads them back
+    /// through polars, so it transiently holds roughly twice the result in
+    /// memory. For very large results, prefer streaming the
+    /// [`RecordBatch`]es via [`crate::Client::sql`]`(..).stream()` and
+    /// converting incrementally.
     #[cfg(feature = "polars")]
     pub fn to_polars(self) -> crate::Result<polars::prelude::DataFrame> {
         use arrow::ipc::writer::FileWriter;
-        use polars::prelude::IpcReader;
         use polars::io::SerReader;
+        use polars::prelude::IpcReader;
         use std::io::Cursor;
 
         let mut buf: Vec<u8> = Vec::new();
@@ -288,11 +283,10 @@ impl IntoIterator for QueryResult {
     }
 }
 
-
 /// Row-by-row iterator over a [`QueryResult`].
 ///
 /// Holds the column-name index in an `Arc` so each yielded [`Row`] can share
-/// the same name→position map — there is no per-row HashMap allocation.
+/// the same name-to-position map, so there is no per-row HashMap allocation.
 pub struct QueryIterator {
     schema: SchemaRef,
     batches: Vec<RecordBatch>,
@@ -373,40 +367,181 @@ pub fn extract_value(array: &dyn Array, row: usize) -> Value {
     }
 
     match array.data_type() {
-        Boolean => {
-            Value::Bool(array.as_any().downcast_ref::<BooleanArray>().unwrap().value(row))
+        Boolean => Value::Bool(
+            array
+                .as_any()
+                .downcast_ref::<BooleanArray>()
+                .unwrap()
+                .value(row),
+        ),
+        Int8 => Value::I8(
+            array
+                .as_any()
+                .downcast_ref::<Int8Array>()
+                .unwrap()
+                .value(row),
+        ),
+        Int16 => Value::I16(
+            array
+                .as_any()
+                .downcast_ref::<Int16Array>()
+                .unwrap()
+                .value(row),
+        ),
+        Int32 => Value::I32(
+            array
+                .as_any()
+                .downcast_ref::<Int32Array>()
+                .unwrap()
+                .value(row),
+        ),
+        Int64 => Value::I64(
+            array
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .unwrap()
+                .value(row),
+        ),
+        UInt8 => Value::U8(
+            array
+                .as_any()
+                .downcast_ref::<UInt8Array>()
+                .unwrap()
+                .value(row),
+        ),
+        UInt16 => Value::U16(
+            array
+                .as_any()
+                .downcast_ref::<UInt16Array>()
+                .unwrap()
+                .value(row),
+        ),
+        UInt32 => Value::U32(
+            array
+                .as_any()
+                .downcast_ref::<UInt32Array>()
+                .unwrap()
+                .value(row),
+        ),
+        UInt64 => Value::U64(
+            array
+                .as_any()
+                .downcast_ref::<UInt64Array>()
+                .unwrap()
+                .value(row),
+        ),
+        Float32 => Value::F32(
+            array
+                .as_any()
+                .downcast_ref::<Float32Array>()
+                .unwrap()
+                .value(row),
+        ),
+        Float64 => Value::F64(
+            array
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .unwrap()
+                .value(row),
+        ),
+        Utf8 => Value::String(
+            array
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap()
+                .value(row)
+                .to_owned(),
+        ),
+        LargeUtf8 => Value::String(
+            array
+                .as_any()
+                .downcast_ref::<LargeStringArray>()
+                .unwrap()
+                .value(row)
+                .to_owned(),
+        ),
+        Binary | LargeBinary => Value::Binary(
+            array
+                .as_any()
+                .downcast_ref::<BinaryArray>()
+                .unwrap()
+                .value(row)
+                .to_owned(),
+        ),
+        Timestamp(arrow_schema::TimeUnit::Nanosecond, _) => Value::Timestamp(
+            array
+                .as_any()
+                .downcast_ref::<TimestampNanosecondArray>()
+                .unwrap()
+                .value(row),
+        ),
+        Timestamp(arrow_schema::TimeUnit::Microsecond, _) => Value::Timestamp(
+            array
+                .as_any()
+                .downcast_ref::<TimestampMicrosecondArray>()
+                .unwrap()
+                .value(row)
+                * 1_000,
+        ),
+        Timestamp(arrow_schema::TimeUnit::Millisecond, _) => Value::Timestamp(
+            array
+                .as_any()
+                .downcast_ref::<TimestampMillisecondArray>()
+                .unwrap()
+                .value(row)
+                * 1_000_000,
+        ),
+        Timestamp(arrow_schema::TimeUnit::Second, _) => Value::Timestamp(
+            array
+                .as_any()
+                .downcast_ref::<TimestampSecondArray>()
+                .unwrap()
+                .value(row)
+                * 1_000_000_000,
+        ),
+        // Dictionary-encoded columns: InfluxDB 3 returns tag columns as
+        // Dictionary(Int32, Utf8).  Resolve the key for this row and recurse
+        // into the values array, so the actual tag value is returned rather
+        // than a debug dump of the column.
+        Dictionary(key_type, _) => {
+            macro_rules! resolve {
+                ($t:ty) => {{
+                    let dict = array
+                        .as_any()
+                        .downcast_ref::<DictionaryArray<$t>>()
+                        .unwrap();
+                    let key = dict.keys().value(row) as usize;
+                    extract_value(dict.values().as_ref(), key)
+                }};
+            }
+            match key_type.as_ref() {
+                Int8 => resolve!(Int8Type),
+                Int16 => resolve!(Int16Type),
+                Int32 => resolve!(Int32Type),
+                Int64 => resolve!(Int64Type),
+                UInt8 => resolve!(UInt8Type),
+                UInt16 => resolve!(UInt16Type),
+                UInt32 => resolve!(UInt32Type),
+                UInt64 => resolve!(UInt64Type),
+                _ => Value::Null,
+            }
         }
-        Int8  => Value::I8(array.as_any().downcast_ref::<Int8Array>().unwrap().value(row)),
-        Int16 => Value::I16(array.as_any().downcast_ref::<Int16Array>().unwrap().value(row)),
-        Int32 => Value::I32(array.as_any().downcast_ref::<Int32Array>().unwrap().value(row)),
-        Int64 => Value::I64(array.as_any().downcast_ref::<Int64Array>().unwrap().value(row)),
-        UInt8  => Value::U8(array.as_any().downcast_ref::<UInt8Array>().unwrap().value(row)),
-        UInt16 => Value::U16(array.as_any().downcast_ref::<UInt16Array>().unwrap().value(row)),
-        UInt32 => Value::U32(array.as_any().downcast_ref::<UInt32Array>().unwrap().value(row)),
-        UInt64 => Value::U64(array.as_any().downcast_ref::<UInt64Array>().unwrap().value(row)),
-        Float32 => Value::F32(array.as_any().downcast_ref::<Float32Array>().unwrap().value(row)),
-        Float64 => Value::F64(array.as_any().downcast_ref::<Float64Array>().unwrap().value(row)),
-        Utf8 => {
-            Value::String(array.as_any().downcast_ref::<StringArray>().unwrap().value(row).to_owned())
-        }
-        LargeUtf8 => {
-            Value::String(array.as_any().downcast_ref::<LargeStringArray>().unwrap().value(row).to_owned())
-        }
-        Binary | LargeBinary => {
-            Value::Binary(array.as_any().downcast_ref::<BinaryArray>().unwrap().value(row).to_owned())
-        }
-        Timestamp(arrow_schema::TimeUnit::Nanosecond, _) => {
-            Value::Timestamp(array.as_any().downcast_ref::<TimestampNanosecondArray>().unwrap().value(row))
-        }
-        Timestamp(arrow_schema::TimeUnit::Microsecond, _) => {
-            Value::Timestamp(array.as_any().downcast_ref::<TimestampMicrosecondArray>().unwrap().value(row) * 1_000)
-        }
-        Timestamp(arrow_schema::TimeUnit::Millisecond, _) => {
-            Value::Timestamp(array.as_any().downcast_ref::<TimestampMillisecondArray>().unwrap().value(row) * 1_000_000)
-        }
-        Timestamp(arrow_schema::TimeUnit::Second, _) => {
-            Value::Timestamp(array.as_any().downcast_ref::<TimestampSecondArray>().unwrap().value(row) * 1_000_000_000)
-        }
-        _other => Value::String(format!("{array:?}")),
+        // Decimals carry a scale that doesn't map onto an f64/i64 cleanly;
+        // render them as their exact decimal string.
+        Decimal128(_, _) => Value::String(
+            array
+                .as_any()
+                .downcast_ref::<Decimal128Array>()
+                .unwrap()
+                .value_as_string(row),
+        ),
+        Decimal256(_, _) => Value::String(
+            array
+                .as_any()
+                .downcast_ref::<Decimal256Array>()
+                .unwrap()
+                .value_as_string(row),
+        ),
+        _other => Value::Null,
     }
 }

@@ -3,10 +3,7 @@ use std::time::Duration;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use url::Url;
 
-use crate::{
-    error::Error,
-    write::WriteOptions,
-};
+use crate::{error::Error, retry::RetryConfig, write::WriteOptions};
 
 /// Configuration for the InfluxDB 3 client.
 ///
@@ -21,10 +18,10 @@ pub struct ClientConfig {
     /// API token.
     pub token: Option<String>,
 
-    /// Authentication scheme — `"Bearer"` (default) or `"Token"`.
+    /// Authentication scheme: `"Bearer"` (default) or `"Token"`.
     pub auth_scheme: String,
 
-    /// Database for all operations. Required — validated at construction time.
+    /// Database for all operations. Required; validated at construction time.
     pub database: String,
 
     /// Organization name (used for v2 API compatibility).
@@ -32,6 +29,10 @@ pub struct ClientConfig {
 
     /// Default write options applied to every write call.
     pub write_options: WriteOptions,
+
+    /// Default retry policy for transient write/query failures. Override per
+    /// request with `WriteRequest`/`QueryRequest` `.retry()` / `.no_retry()`.
+    pub retry: RetryConfig,
 
     /// Extra HTTP headers sent with every request.
     pub headers: HeaderMap,
@@ -45,7 +46,8 @@ pub struct ClientConfig {
     /// Request timeout for write calls.
     pub write_timeout: Duration,
 
-    /// Request timeout for HTTP query calls.
+    /// Timeout for the Flight channel connect and for collected (`.await`)
+    /// queries. Streaming queries (`.stream()`) are intentionally unbounded.
     pub query_timeout: Duration,
 
     /// Keep-alive idle connection timeout.
@@ -64,6 +66,7 @@ impl Default for ClientConfig {
             database: String::new(), // validated as non-empty in build()
             org: None,
             write_options: WriteOptions::default(),
+            retry: RetryConfig::default(),
             headers: HeaderMap::new(),
             ssl_roots_path: None,
             proxy: None,
@@ -85,14 +88,13 @@ impl ClientConfig {
     /// from the process environment. `INFLUX_HOST` and `INFLUX_DATABASE` are
     /// required; token and org are optional.
     pub fn from_env() -> Result<Self, Error> {
-        let host = std::env::var("INFLUX_HOST")
-            .map_err(|_| Error::EnvVar("INFLUX_HOST".into()))?;
+        let host = std::env::var("INFLUX_HOST").map_err(|_| Error::EnvVar("INFLUX_HOST".into()))?;
         let database = std::env::var("INFLUX_DATABASE")
             .or_else(|_| std::env::var("INFLUX_BUCKET"))
             .map_err(|_| Error::EnvVar("INFLUX_DATABASE".into()))?;
 
         let token = std::env::var("INFLUX_TOKEN").ok();
-        let org   = std::env::var("INFLUX_ORG").ok();
+        let org = std::env::var("INFLUX_ORG").ok();
 
         ClientConfig::builder()
             .host(host)
@@ -117,10 +119,16 @@ impl ClientConfig {
 
         for (key, value) in url.query_pairs() {
             match key.as_ref() {
-                "token"              => { builder = builder.token(value.into_owned()); }
-                "database" | "bucket" => { builder = builder.database(value.into_owned()); }
-                "org"                => { builder = builder.org(value.into_owned()); }
-                _other               => {}
+                "token" => {
+                    builder = builder.token(value.into_owned());
+                }
+                "database" | "bucket" => {
+                    builder = builder.database(value.into_owned());
+                }
+                "org" => {
+                    builder = builder.org(value.into_owned());
+                }
+                _other => {}
             }
         }
 
@@ -133,19 +141,26 @@ impl ClientConfig {
     }
 
     /// Build the `Authorization` header value (`"Bearer TOKEN"` etc.).
-    pub fn authorization_header(&self) -> Option<HeaderValue> {
-        self.token.as_ref().map(|tok| {
-            HeaderValue::from_str(&format!("{} {}", self.auth_scheme, tok))
-                .expect("token contains invalid header characters")
-        })
+    ///
+    /// Returns `Ok(None)` when no token is set. Returns an error if the token
+    /// contains characters that are invalid in an HTTP header value.
+    pub fn authorization_header(&self) -> Result<Option<HeaderValue>, Error> {
+        match &self.token {
+            None => Ok(None),
+            Some(tok) => HeaderValue::from_str(&format!("{} {}", self.auth_scheme, tok))
+                .map(Some)
+                .map_err(|_| Error::Config("token contains invalid header characters".into())),
+        }
     }
 }
-
 
 /// Fluent builder for [`ClientConfig`].
 #[derive(Debug, Default)]
 pub struct ClientConfigBuilder {
     cfg: ClientConfig,
+    /// Validated when [`ClientConfigBuilder::build`] is called, so a malformed
+    /// header surfaces as an error rather than a panic at insertion time.
+    pending_headers: Vec<(String, String)>,
 }
 
 impl ClientConfigBuilder {
@@ -191,13 +206,18 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Set the default retry policy for transient write/query failures.
+    pub fn retry(mut self, retry: RetryConfig) -> Self {
+        self.cfg.retry = retry;
+        self
+    }
+
     /// Add a single extra HTTP header sent with every request.
+    ///
+    /// The name and value are validated in [`build`](Self::build), so an
+    /// invalid header is reported as an error rather than panicking here.
     pub fn header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        let name = HeaderName::from_bytes(key.into().as_bytes())
-            .expect("invalid header name");
-        let val = HeaderValue::from_str(&value.into())
-            .expect("invalid header value");
-        self.cfg.headers.insert(name, val);
+        self.pending_headers.push((key.into(), value.into()));
         self
     }
 
@@ -234,7 +254,7 @@ impl ClientConfigBuilder {
     /// Validate and produce the final [`ClientConfig`].
     ///
     /// Returns an error if `host` or `database` were not set.
-    pub fn build(self) -> Result<ClientConfig, Error> {
+    pub fn build(mut self) -> Result<ClientConfig, Error> {
         if self.cfg.host.is_empty() {
             return Err(Error::Config("host is required".into()));
         }
@@ -243,7 +263,18 @@ impl ClientConfigBuilder {
         if self.cfg.database.is_empty() {
             return Err(Error::Config("database is required".into()));
         }
+
+        for (key, value) in self.pending_headers {
+            let name = HeaderName::from_bytes(key.as_bytes())
+                .map_err(|e| Error::Config(format!("invalid header name '{key}': {e}")))?;
+            let val = HeaderValue::from_str(&value)
+                .map_err(|e| Error::Config(format!("invalid value for header '{key}': {e}")))?;
+            self.cfg.headers.insert(name, val);
+        }
+
+        // Surface a malformed token now rather than on the first request.
+        self.cfg.authorization_header()?;
+
         Ok(self.cfg)
     }
 }
-

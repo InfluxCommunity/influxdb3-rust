@@ -34,7 +34,8 @@ async fn lp_string_with_overrides() {
         .await;
 
     let client = make_client(&server).await;
-    client.write("cpu usage=1.0")
+    client
+        .write("cpu usage=1.0")
         .precision(Precision::Millisecond)
         .no_sync()
         .await
@@ -44,7 +45,7 @@ async fn lp_string_with_overrides() {
 
 #[tokio::test]
 async fn points_batch_splitting() {
-    // 5 points at batch_size=2 → 3 sequential requests.
+    // 5 points at batch_size=2 means 3 sequential requests.
     let mut server = Server::new_async().await;
     let m = server
         .mock("POST", "/api/v3/write_lp")
@@ -56,33 +57,81 @@ async fn points_batch_splitting() {
 
     let client = make_client(&server).await;
     let points: Vec<Point> = (0..5)
-        .map(|i| Point::new("cpu").tag("h", format!("s{i}")).field("v", i as f64))
+        .map(|i| {
+            Point::new("cpu")
+                .tag("h", format!("s{i}"))
+                .field("v", i as f64)
+        })
         .collect();
-    client.write(points).batch_size(2).max_inflight(1).await.unwrap();
+    client
+        .write(points)
+        .batch_size(2)
+        .max_inflight(1)
+        .await
+        .unwrap();
     m.assert_async().await;
 }
 
 #[tokio::test]
-async fn server_error_surfaces() {
+async fn default_tags_and_order_reach_the_wire() {
+    // default tags merge in (point wins on conflict); explicit tag_order is
+    // honoured with leftover tags appended alphabetically.
     let mut server = Server::new_async().await;
-    let _m = server
+    let m = server
         .mock("POST", "/api/v3/write_lp")
         .match_query(Matcher::Any)
-        .with_status(500)
-        .with_body(r#"{"error":"internal"}"#)
+        .match_body("m,host=override,z=1,a=2,env=prod v=1i")
+        .with_status(204)
+        .create_async()
+        .await;
+
+    let client = make_client(&server).await;
+    let point = Point::new("m")
+        .tag("host", "override")
+        .tag("z", "1")
+        .tag("a", "2")
+        .field("v", 1_i64);
+    client
+        .write(vec![point])
+        .default_tag("env", "prod")
+        .default_tag("host", "default")
+        .tag_order(["host", "z"])
+        .await
+        .unwrap();
+    m.assert_async().await;
+}
+
+#[tokio::test]
+async fn non_retryable_error_surfaces_once() {
+    // A 404 is deterministic, so it surfaces immediately without retrying.
+    // (Transient 5xx/retry behaviour is covered in retry_tests.rs.)
+    let mut server = Server::new_async().await;
+    let m = server
+        .mock("POST", "/api/v3/write_lp")
+        .match_query(Matcher::Any)
+        .with_status(404)
+        .with_body(r#"{"error":"database not found"}"#)
+        .expect(1)
         .create_async()
         .await;
 
     let client = make_client(&server).await;
     let err = client.write("bad").await.unwrap_err().to_string();
-    assert!(err.contains("500") || err.contains("server error"), "got: {err}");
+    assert!(
+        err.contains("404") || err.contains("server error"),
+        "got: {err}"
+    );
+    m.assert_async().await;
 }
 
 #[tokio::test]
 async fn empty_point_pre_flight_error() {
-    // Pre-flight validation — no HTTP request made.
+    // Pre-flight validation; no HTTP request made.
     let server = Server::new_async().await;
     let client = make_client(&server).await;
-    let err = client.write(vec![Point::new("x").tag("k", "v")]).await.unwrap_err();
+    let err = client
+        .write(vec![Point::new("x").tag("k", "v")])
+        .await
+        .unwrap_err();
     assert!(err.to_string().contains("no fields"), "got: {err}");
 }

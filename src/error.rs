@@ -23,7 +23,7 @@ impl std::fmt::Display for LineError {
 /// listing every rejected line. Check `line_errors` for details.
 #[derive(Debug, Error)]
 #[error(
-    "partial write: {} line(s) rejected — first error: {}",
+    "partial write: {} line(s) rejected; first error: {}",
     line_errors.len(),
     line_errors.first().map(|e| e.message.as_str()).unwrap_or("unknown")
 )]
@@ -61,6 +61,10 @@ pub enum Error {
     /// Server returned an error response (non-2xx HTTP)
     #[error("server error {code}: {message}")]
     Server { code: u16, message: String },
+
+    /// An operation exceeded its configured timeout
+    #[error("operation timed out after {0:?}")]
+    Timeout(std::time::Duration),
 
     /// Server accepted some lines and rejected others
     #[error(transparent)]

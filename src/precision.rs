@@ -71,10 +71,10 @@ mod tests {
     fn api() {
         let ns: i64 = 1_700_000_000_123_456_789;
         for (p, scaled) in [
-            (Precision::Nanosecond,  ns),
+            (Precision::Nanosecond, ns),
             (Precision::Microsecond, ns / 1_000),
             (Precision::Millisecond, ns / 1_000_000),
-            (Precision::Second,      ns / 1_000_000_000),
+            (Precision::Second, ns / 1_000_000_000),
         ] {
             assert_eq!(p.as_str().parse::<Precision>().unwrap(), p);
             assert_eq!(p.scale_timestamp(ns), scaled);

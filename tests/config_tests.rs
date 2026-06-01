@@ -2,53 +2,66 @@
 use influxdb3_client::ClientConfig;
 
 #[test]
-fn builder() {
-    // Missing host
+fn construction_and_connection_string() {
+    // Builder validation.
     let err = ClientConfig::builder().database("db").build().unwrap_err();
     assert!(err.to_string().contains("host is required"), "got: {err}");
-
-    // Missing database
-    let err = ClientConfig::builder().host("http://localhost").build().unwrap_err();
-    assert!(err.to_string().contains("database is required"), "got: {err}");
-
-    // Invalid host URL
-    let err = ClientConfig::builder().host("not a url!!").database("db").build().unwrap_err();
+    let err = ClientConfig::builder()
+        .host("http://localhost")
+        .build()
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("database is required"),
+        "got: {err}"
+    );
+    let err = ClientConfig::builder()
+        .host("not a url!!")
+        .database("db")
+        .build()
+        .unwrap_err();
     assert!(err.to_string().contains("invalid"), "got: {err}");
-}
 
-#[test]
-fn connection_string() {
-    // Full form
+    // Connection string, full form.
     let cfg = ClientConfig::from_connection_string(
         "https://cluster.example.io/?token=TOK&database=DB&org=ORG",
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(cfg.host_url(), "https://cluster.example.io");
     assert_eq!(cfg.token.as_deref(), Some("TOK"));
     assert_eq!(cfg.database, "DB");
     assert_eq!(cfg.org.as_deref(), Some("ORG"));
 
-    // `bucket` alias for `database` (v2 compat)
+    // `bucket` is an alias for `database` (v2 compat).
     let cfg = ClientConfig::from_connection_string("https://h/?token=T&bucket=mybucket").unwrap();
     assert_eq!(cfg.database, "mybucket");
 
-    // Missing database → error
+    // Connection string with no database is an error.
     let err = ClientConfig::from_connection_string("http://localhost:8086/?token=T").unwrap_err();
-    assert!(err.to_string().contains("database is required"), "got: {err}");
+    assert!(
+        err.to_string().contains("database is required"),
+        "got: {err}"
+    );
 }
 
 #[test]
 fn from_env() {
-    // Errors when host/database missing
+    // Errors when host/database missing.
     std::env::remove_var("INFLUX_HOST");
-    assert!(ClientConfig::from_env().unwrap_err().to_string().contains("INFLUX_HOST"));
+    assert!(ClientConfig::from_env()
+        .unwrap_err()
+        .to_string()
+        .contains("INFLUX_HOST"));
     std::env::set_var("INFLUX_HOST", "https://env-host");
     std::env::remove_var("INFLUX_TOKEN");
     std::env::remove_var("INFLUX_DATABASE");
     std::env::remove_var("INFLUX_BUCKET");
     std::env::remove_var("INFLUX_ORG");
-    assert!(ClientConfig::from_env().unwrap_err().to_string().contains("INFLUX_DATABASE"));
+    assert!(ClientConfig::from_env()
+        .unwrap_err()
+        .to_string()
+        .contains("INFLUX_DATABASE"));
 
-    // Full happy path
+    // Full happy path.
     std::env::set_var("INFLUX_TOKEN", "env-token");
     std::env::set_var("INFLUX_DATABASE", "env-db");
     std::env::set_var("INFLUX_ORG", "env-org");
@@ -58,7 +71,12 @@ fn from_env() {
     assert_eq!(cfg.database, "env-db");
     assert_eq!(cfg.org.as_deref(), Some("env-org"));
 
-    for v in ["INFLUX_HOST", "INFLUX_TOKEN", "INFLUX_DATABASE", "INFLUX_ORG"] {
+    for v in [
+        "INFLUX_HOST",
+        "INFLUX_TOKEN",
+        "INFLUX_DATABASE",
+        "INFLUX_ORG",
+    ] {
         std::env::remove_var(v);
     }
 }

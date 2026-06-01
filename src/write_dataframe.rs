@@ -1,4 +1,4 @@
-//! Polars [`DataFrame`] → InfluxDB line protocol serialiser.
+//! Polars [`DataFrame`] to InfluxDB line protocol serialiser.
 //!
 //! This module is compiled **only** when the `polars` Cargo feature is enabled.
 //! It converts every row of a DataFrame into an InfluxDB line-protocol line,
@@ -8,54 +8,35 @@ use std::collections::HashSet;
 
 use polars::prelude::{AnyValue, DataFrame, TimeUnit};
 
+use crate::point::{escape_measurement, escape_string_field, escape_tag};
 use crate::{error::Error, precision::Precision};
 
-// Mirror the rules in point.rs (those fns are pub(crate) — not re-used here to
-// keep the module self-contained).
-
-fn escape_measurement(s: &str) -> String {
-    s.replace(',', "\\,").replace(' ', "\\ ")
-}
-
-fn escape_tag_key(s: &str) -> String {
-    s.replace(',', "\\,").replace('=', "\\=").replace(' ', "\\ ")
-}
-
-fn escape_field_key(s: &str) -> String {
-    escape_tag_key(s) // same rules
-}
-
-fn escape_string_field(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
-
 /// Convert an `AnyValue` to a **tag value** string (escaped, unquoted).
-/// Returns `None` for null values — the tag is silently omitted.
+/// Returns `None` for null values, which are silently omitted.
 fn to_tag_value(val: AnyValue<'_>) -> Option<String> {
     match val {
         AnyValue::Null => None,
-        AnyValue::String(s) => Some(escape_tag_key(s)),
-        AnyValue::StringOwned(s) => Some(escape_tag_key(s.as_str())),
-        other => Some(escape_tag_key(&format!("{other}"))),
+        AnyValue::String(s) => Some(escape_tag(s).into_owned()),
+        AnyValue::StringOwned(s) => Some(escape_tag(s.as_str()).into_owned()),
+        other => Some(escape_tag(&format!("{other}")).into_owned()),
     }
 }
 
 /// Convert an `AnyValue` to a typed **field** string with the correct suffix.
-/// Returns `None` for null values — the field is silently omitted.
+/// Returns `None` for null values, which are silently omitted.
 fn to_field_value(val: AnyValue<'_>) -> Option<String> {
     match val {
         AnyValue::Null => None,
         AnyValue::Boolean(v) => Some(if v { "true".into() } else { "false".into() }),
-        AnyValue::Int8(v)    => Some(format!("{v}i")),
-        AnyValue::Int16(v)   => Some(format!("{v}i")),
-        AnyValue::Int32(v)   => Some(format!("{v}i")),
-        AnyValue::Int64(v)   => Some(format!("{v}i")),
-        AnyValue::Int128(v)  => Some(format!("{v}i")),
-        AnyValue::UInt8(v)   => Some(format!("{v}u")),
-        AnyValue::UInt16(v)  => Some(format!("{v}u")),
-        AnyValue::UInt32(v)  => Some(format!("{v}u")),
-        AnyValue::UInt64(v)  => Some(format!("{v}u")),
+        AnyValue::Int8(v) => Some(format!("{v}i")),
+        AnyValue::Int16(v) => Some(format!("{v}i")),
+        AnyValue::Int32(v) => Some(format!("{v}i")),
+        AnyValue::Int64(v) => Some(format!("{v}i")),
+        AnyValue::Int128(v) => Some(format!("{v}i")),
+        AnyValue::UInt8(v) => Some(format!("{v}u")),
+        AnyValue::UInt16(v) => Some(format!("{v}u")),
+        AnyValue::UInt32(v) => Some(format!("{v}u")),
+        AnyValue::UInt64(v) => Some(format!("{v}u")),
         AnyValue::UInt128(v) => Some(format!("{v}u")),
         AnyValue::Float32(v) => {
             if v.fract() == 0.0 && v.is_finite() {
@@ -71,7 +52,7 @@ fn to_field_value(val: AnyValue<'_>) -> Option<String> {
                 Some(format!("{v}"))
             }
         }
-        // f16 — convert via f32
+        // f16 via f32
         AnyValue::Float16(v) => {
             let f = f32::from(v);
             if f.fract() == 0.0 && f.is_finite() {
@@ -84,12 +65,10 @@ fn to_field_value(val: AnyValue<'_>) -> Option<String> {
         AnyValue::StringOwned(s) => Some(format!("\"{}\"", escape_string_field(s.as_str()))),
         // Temporal types that end up as field columns are emitted as integers.
         // These should normally be the timestamp column; this is a graceful fallback.
-        AnyValue::Datetime(v, _, _) | AnyValue::DatetimeOwned(v, _, _) => {
-            Some(format!("{v}i"))
-        }
-        AnyValue::Date(v)        => Some(format!("{v}i")),
+        AnyValue::Datetime(v, _, _) | AnyValue::DatetimeOwned(v, _, _) => Some(format!("{v}i")),
+        AnyValue::Date(v) => Some(format!("{v}i")),
         AnyValue::Duration(v, _) => Some(format!("{v}i")),
-        AnyValue::Time(v)        => Some(format!("{v}i")),
+        AnyValue::Time(v) => Some(format!("{v}i")),
         // Everything else: stringify as a quoted string field.
         other => Some(format!("\"{}\"", escape_string_field(&format!("{other}")))),
     }
@@ -98,23 +77,23 @@ fn to_field_value(val: AnyValue<'_>) -> Option<String> {
 /// Convert a timestamp `AnyValue` to the integer form used in line protocol.
 ///
 /// * `Int32/Int64/UInt32/UInt64` columns are treated as **already** in the
-///   target `precision` — returned as-is.
+///   target `precision`, returned as-is.
 /// * `Datetime` columns are converted from their stored `TimeUnit` to the
 ///   target precision automatically.
-/// * `Null` → returns `None` (no timestamp; server assigns).
+/// * `Null` returns `None` (no timestamp; server assigns).
 fn to_timestamp(val: AnyValue<'_>, precision: Precision) -> Option<i64> {
     match val {
         AnyValue::Null => None,
         // Integer columns: caller's precision defines the unit.
-        AnyValue::Int64(v)  => Some(v),
-        AnyValue::Int32(v)  => Some(v as i64),
+        AnyValue::Int64(v) => Some(v),
+        AnyValue::Int32(v) => Some(v as i64),
         AnyValue::UInt64(v) => Some(v as i64),
         AnyValue::UInt32(v) => Some(v as i64),
-        // Polars Datetime: stored in the column's own TimeUnit → convert to ns
-        // then rescale to the target precision.
+        // Polars Datetime: stored in the column's own TimeUnit, converted to ns
+        // then rescaled to the target precision.
         AnyValue::Datetime(v, tu, _) | AnyValue::DatetimeOwned(v, tu, _) => {
             let nanos = match tu {
-                TimeUnit::Nanoseconds  => v,
+                TimeUnit::Nanoseconds => v,
                 TimeUnit::Microseconds => v * 1_000,
                 TimeUnit::Milliseconds => v * 1_000_000,
             };
@@ -124,27 +103,26 @@ fn to_timestamp(val: AnyValue<'_>, precision: Precision) -> Option<i64> {
     }
 }
 
-
 /// Serialise a polars [`DataFrame`] to newline-separated InfluxDB line protocol.
 ///
 /// # Arguments
 ///
-/// * `df` — the DataFrame to serialise.
-/// * `measurement` — the measurement name written for every row.
-/// * `tags` — column names to emit as `tag=value` pairs.  Order is preserved.
-/// * `timestamp_column` — column whose value becomes the row timestamp.
+/// * `df`: the DataFrame to serialise.
+/// * `measurement`: the measurement name written for every row.
+/// * `tags`: column names to emit as `tag=value` pairs. Order is preserved.
+/// * `timestamp_column`: column whose value becomes the row timestamp.
 ///   - `Datetime` columns are converted to the target `precision`.
-///   - Numeric (`Int64`, `UInt64`, …) columns are assumed already in `precision`.
-///   - `None` → no timestamp; InfluxDB assigns the server time.
-/// * `precision` — controls timestamp scaling and the `?precision=` URL
+///   - Numeric (`Int64`, `UInt64`, ...) columns are assumed already in `precision`.
+///   - `None` leaves the timestamp off, so InfluxDB assigns the server time.
+/// * `precision`: controls timestamp scaling and the `?precision=` URL
 ///   parameter sent with the write request.
 ///
 /// # Behaviour
 ///
-/// * Null tag values → tag is omitted for that row.
-/// * Null field values → field is omitted for that row.
-/// * Rows where **all** fields are null → row is dropped entirely.
-/// * Null timestamp → timestamp is omitted; server assigns the time.
+/// * Null tag values omit that tag for the row.
+/// * Null field values omit that field for the row.
+/// * Rows where **all** fields are null are dropped entirely.
+/// * A null timestamp is omitted, so the server assigns the time.
 pub fn dataframe_to_line_protocol(
     df: &DataFrame,
     measurement: &str,
@@ -162,9 +140,8 @@ pub fn dataframe_to_line_protocol(
 
     // Pre-fetch all columns by index once (polars 0.53: Column is not Series).
     let width = df.width();
-    let all_columns: Vec<&polars::frame::column::Column> = (0..width)
-        .filter_map(|i| df.select_at_idx(i))
-        .collect();
+    let all_columns: Vec<&polars::frame::column::Column> =
+        (0..width).filter_map(|i| df.select_at_idx(i)).collect();
 
     let mut lines: Vec<String> = Vec::with_capacity(height);
 
@@ -181,7 +158,7 @@ pub fn dataframe_to_line_protocol(
                     .map_err(|e| Error::Config(format!("polars row access error: {e}")))?;
                 if let Some(tv) = to_tag_value(val) {
                     line.push(',');
-                    line.push_str(&escape_tag_key(tag));
+                    line.push_str(&escape_tag(tag));
                     line.push('=');
                     line.push_str(&tv);
                 }
@@ -205,7 +182,7 @@ pub fn dataframe_to_line_protocol(
                 if !first_field {
                     line.push(',');
                 }
-                line.push_str(&escape_field_key(name));
+                line.push_str(&escape_tag(name));
                 line.push('=');
                 line.push_str(&fv);
                 first_field = false;
@@ -213,7 +190,7 @@ pub fn dataframe_to_line_protocol(
         }
 
         if line.len() == field_start {
-            // All fields were null — skip this row entirely.
+            // All fields were null; skip this row entirely.
             continue;
         }
 
@@ -234,7 +211,6 @@ pub fn dataframe_to_line_protocol(
 
     Ok(lines.join("\n"))
 }
-
 
 /// A polars [`DataFrame`] bundled with the metadata needed to write it as line
 /// protocol.
@@ -292,8 +268,8 @@ impl<'a> DataFrameWrite<'a> {
     /// Column whose value becomes the line-protocol timestamp.
     ///
     /// - `Datetime` columns are converted to the write precision automatically.
-    /// - Integer (`Int64`, `UInt64`, …) columns are used as-is.
-    /// - `None` (the default) → no timestamp; InfluxDB assigns server time.
+    /// - Integer (`Int64`, `UInt64`, ...) columns are used as-is.
+    /// - `None` (the default) leaves the timestamp off; InfluxDB assigns it.
     pub fn timestamp_column(mut self, col: impl Into<String>) -> Self {
         self.timestamp_column = Some(col.into());
         self
@@ -311,14 +287,20 @@ impl crate::write::WriteInput for DataFrameWrite<'_> {
         let tag_refs: Vec<&str> = self.tags.iter().map(|s| s.as_str()).collect();
         let ts_col = self.timestamp_column.as_deref();
 
-        // Serialise upfront: DataFrameWrite borrows `&'a DataFrame`, so we
-        // can't outlive the call.  This is the same memory profile as the
-        // previous behaviour — only Vec<Point> benefits from lazy chunking.
+        // Serialise upfront: DataFrameWrite borrows `&'a DataFrame`, so the
+        // iterator can't outlive the call. Only Vec<Point> benefits from the
+        // lazy per-batch chunking.
         let mut batches: Vec<crate::Result<Vec<u8>>> = Vec::new();
         for start in (0..height).step_by(batch_size) {
             let end = (start + batch_size).min(height);
             let slice = self.df.slice(start as i64, end - start);
-            match dataframe_to_line_protocol(&slice, &self.measurement, &tag_refs, ts_col, precision) {
+            match dataframe_to_line_protocol(
+                &slice,
+                &self.measurement,
+                &tag_refs,
+                ts_col,
+                precision,
+            ) {
                 Ok(lp) if !lp.is_empty() => batches.push(Ok(lp.into_bytes())),
                 Ok(_) => {}
                 Err(e) => {
@@ -330,7 +312,6 @@ impl crate::write::WriteInput for DataFrameWrite<'_> {
         Box::new(batches.into_iter())
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -351,8 +332,14 @@ mod tests {
             "ts"      => [1_700_000_000_000_i64],
         ]
         .unwrap();
-        let lp = dataframe_to_line_protocol(&df, "m,name", &["host"], Some("ts"), Precision::Millisecond)
-            .unwrap();
+        let lp = dataframe_to_line_protocol(
+            &df,
+            "m,name",
+            &["host"],
+            Some("ts"),
+            Precision::Millisecond,
+        )
+        .unwrap();
         assert!(lp.starts_with(r"m\,name,host=srv\,1 "), "got: {lp}");
         assert!(lp.contains("cpu_pct=42.5"));
         assert!(lp.contains("mem_mb=8192i"));
@@ -365,17 +352,22 @@ mod tests {
 
     #[test]
     fn null_and_empty_handling() {
-        // Row dropped when all fields null; empty DF → empty LP.
+        // Row dropped when all fields null; empty DF yields empty LP.
         let df = df![
             "v"  => [Some(1.0_f64), None::<f64>],
             "ts" => [100_i64, 200_i64],
         ]
         .unwrap();
-        let lp = dataframe_to_line_protocol(&df, "m", &[], Some("ts"), Precision::Nanosecond).unwrap();
+        let lp =
+            dataframe_to_line_protocol(&df, "m", &[], Some("ts"), Precision::Nanosecond).unwrap();
         assert_eq!(lp.lines().count(), 1);
         assert!(lp.contains("v=1.0"));
 
         let df = df!["v" => Vec::<i64>::new()].unwrap();
-        assert!(dataframe_to_line_protocol(&df, "m", &[], None, Precision::Nanosecond).unwrap().is_empty());
+        assert!(
+            dataframe_to_line_protocol(&df, "m", &[], None, Precision::Nanosecond)
+                .unwrap()
+                .is_empty()
+        );
     }
 }

@@ -22,7 +22,7 @@
 //!             .build()?,
 //!     ).await?;
 //!
-//!     // Write points — chain options, then await.
+//!     // Write points: chain options, then await.
 //!     let points = vec![
 //!         Point::new("temperature")
 //!             .tag("location", "office")
@@ -33,10 +33,10 @@
 //!         .precision(Precision::Millisecond)
 //!         .await?;
 //!
-//!     // Raw line protocol — low-level escape hatch
+//!     // Raw line protocol (low-level escape hatch)
 //!     client.write("cpu,host=srv1 usage=0.72").await?;
 //!
-//!     // Query with SQL — `.sql()` is sugar for `.query(q, QueryType::Sql)`
+//!     // Query with SQL. `.sql()` is shorthand for `.query(q, QueryType::Sql)`.
 //!     let result = client
 //!         .sql("SELECT * FROM temperature ORDER BY time DESC LIMIT 10")
 //!         .await?;
@@ -61,7 +61,7 @@
 //! # async fn example(client: &Client) -> influxdb3_client::Result<()> {
 //! let mut stream = client.sql("SELECT * FROM huge_table").stream().await?;
 //! while let Some(batch) = stream.try_next().await? {
-//!     // batch is an Arrow RecordBatch — process columns directly
+//!     // batch is an Arrow RecordBatch; process columns directly
 //!     println!("got {} rows", batch.num_rows());
 //! }
 //! # Ok(()) }
@@ -78,7 +78,8 @@
 //! client.write(points)
 //!     .batch_size(10_000)
 //!     .max_inflight(8)
-//!     .no_sync()              // skip WAL sync — higher throughput
+//!     .no_sync()                  // skip WAL sync for higher throughput
+//!     .gzip_threshold(None)       // skip gzip on a fast LAN where bandwidth isn't the bottleneck
 //!     .await?;
 //! # Ok(()) }
 //! ```
@@ -90,11 +91,11 @@ pub mod flight;
 pub mod point;
 pub mod precision;
 pub mod query;
+pub mod retry;
 pub mod write;
 
 #[cfg(feature = "polars")]
 pub mod write_dataframe;
-
 
 pub use client::{Client, QueryRequest, WriteRequest};
 pub use config::{ClientConfig, ClientConfigBuilder};
@@ -102,13 +103,9 @@ pub use error::{Error, PartialWriteError};
 pub use flight::BatchStream;
 pub use point::{FieldValue, Point};
 pub use precision::Precision;
-pub use query::{
-    QueryIterator, QueryParameters, QueryResult, QueryType, Row, Value,
-};
-pub use write::{
-    WriteInput, WriteOptions, WriteOptionsBuilder,
-    DEFAULT_BATCH_SIZE, DEFAULT_MAX_INFLIGHT,
-};
+pub use query::{QueryIterator, QueryParameters, QueryResult, QueryType, Row, Value};
+pub use retry::RetryConfig;
+pub use write::{WriteInput, WriteOptions, DEFAULT_BATCH_SIZE, DEFAULT_MAX_INFLIGHT};
 
 /// Convenience alias for `std::result::Result<T, Error>`.
 pub type Result<T> = std::result::Result<T, Error>;

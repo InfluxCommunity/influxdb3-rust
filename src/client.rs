@@ -3,11 +3,12 @@ use std::future::IntoFuture;
 use std::io::Write as IoWrite;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use futures_util::stream::{self, StreamExt, TryStreamExt};
 use reqwest::{
-    header::{AUTHORIZATION, CONTENT_ENCODING, CONTENT_TYPE},
+    header::{AUTHORIZATION, CONTENT_ENCODING, CONTENT_TYPE, RETRY_AFTER},
     Client as HttpClient, ClientBuilder, Response,
 };
 use tokio::sync::OnceCell;
@@ -18,10 +19,10 @@ use crate::{
     flight::{BatchStream, FlightQueryClient},
     precision::Precision,
     query::{QueryOptions, QueryParameters, QueryResult, QueryType},
+    retry::{self, RetryConfig},
     write::{WriteInput, WriteOptions},
     Result,
 };
-
 
 /// Async client for InfluxDB 3 Core and Enterprise.
 ///
@@ -63,14 +64,13 @@ impl Client {
         &self.config
     }
 
-
     /// Start a write request.
     ///
     /// `data` may be any [`WriteInput`]: a `&str` / `String` of pre-formatted
     /// line protocol, a `Vec<Point>` / `&[Point]`, a [`DataFrameWrite`] (polars
     /// feature), or your own type that implements the trait.
     ///
-    /// Returns a [`WriteRequest`] builder — chain options, then `.await`.
+    /// Returns a [`WriteRequest`] builder; chain options, then `.await`.
     /// See the crate-level docs for examples.
     ///
     /// [`DataFrameWrite`]: crate::write_dataframe::DataFrameWrite
@@ -79,6 +79,7 @@ impl Client {
             client: self,
             data: Some(data),
             options: self.config.write_options.clone(),
+            retry: None,
         }
     }
 
@@ -100,6 +101,7 @@ impl Client {
             query_type: language,
             params: QueryParameters::new(),
             headers: HashMap::new(),
+            retry: None,
         }
     }
 
@@ -107,7 +109,7 @@ impl Client {
     pub async fn ping(&self) -> Result<String> {
         let url = format!("{}/ping", self.config.host_url());
         let mut req = self.http.get(&url);
-        if let Some(auth) = self.config.authorization_header() {
+        if let Some(auth) = self.config.authorization_header()? {
             req = req.header(AUTHORIZATION, auth);
         }
         let resp = req.send().await?;
@@ -120,7 +122,6 @@ impl Client {
         Ok(version)
     }
 
-
     /// Internal: resolve the Flight client (lazy-init on first call).
     async fn flight(&self) -> Result<&FlightQueryClient> {
         self.flight
@@ -130,15 +131,20 @@ impl Client {
                     self.config.token.as_deref(),
                     &self.config.auth_scheme,
                     self.config.ssl_roots_path.as_deref(),
+                    self.config.query_timeout,
                 )
                 .await
             })
             .await
     }
 
-
-    /// Internal: send one LP batch as a single HTTP request.
-    async fn send_lp(&self, body: Vec<u8>, opts: &WriteOptions) -> Result<()> {
+    /// Internal: send one LP batch, retrying transient failures per `policy`.
+    async fn send_lp(
+        &self,
+        body: Vec<u8>,
+        opts: &WriteOptions,
+        policy: &RetryConfig,
+    ) -> Result<()> {
         let db = &self.config.database;
 
         let (url, mut params) = if opts.use_v2_api {
@@ -160,32 +166,58 @@ impl Client {
 
         params.push(("precision", opts.precision.as_str().to_string()));
 
+        // Compress once; each attempt re-sends the same (Arc-backed) Bytes.
         let (final_body, compressed) = maybe_gzip(body, opts.gzip_threshold).await?;
 
-        let mut req = self.http.post(&url).query(&params);
+        let mut base = self
+            .http
+            .post(&url)
+            .query(&params)
+            .header(CONTENT_TYPE, "text/plain; charset=utf-8");
         if compressed {
-            req = req.header(CONTENT_ENCODING, "gzip");
+            base = base.header(CONTENT_ENCODING, "gzip");
         }
-        req = req.header(CONTENT_TYPE, "text/plain; charset=utf-8");
-
-        if let Some(auth) = self.config.authorization_header() {
-            req = req.header(AUTHORIZATION, auth);
+        if let Some(auth) = self.config.authorization_header()? {
+            base = base.header(AUTHORIZATION, auth);
         }
         for (k, v) in &self.config.headers {
-            req = req.header(k, v);
+            base = base.header(k, v);
         }
+        let base = base.body(final_body);
 
-        let resp = req.body(final_body).send().await?;
-        handle_write_response(resp).await
+        let start = Instant::now();
+        let mut attempt: u32 = 0;
+        loop {
+            let req = base.try_clone().expect("write body is cloneable");
+            match send_write_once(req).await {
+                WriteAttempt::Ok => return Ok(()),
+                WriteAttempt::Fatal(e) => return Err(e),
+                WriteAttempt::Retry { after, last } => {
+                    if attempt >= policy.max_retries {
+                        return Err(last);
+                    }
+                    let delay = after
+                        .filter(|_| policy.honor_retry_after)
+                        .unwrap_or_else(|| policy.backoff(attempt));
+                    if let Some(budget) = policy.max_elapsed {
+                        if start.elapsed() + delay > budget {
+                            return Err(last);
+                        }
+                    }
+                    tokio::time::sleep(delay).await;
+                    attempt += 1;
+                }
+            }
+        }
     }
 }
 
-
-/// Builder produced by [`Client::write`] — chain options, then `.await`.
+/// Builder produced by [`Client::write`]; chain options, then `.await`.
 pub struct WriteRequest<'a, W: WriteInput> {
     client: &'a Client,
     data: Option<W>,
     options: WriteOptions,
+    retry: Option<RetryConfig>,
 }
 
 impl<'a, W: WriteInput> WriteRequest<'a, W> {
@@ -217,6 +249,9 @@ impl<'a, W: WriteInput> WriteRequest<'a, W> {
         self.options.default_tags.insert(key.into(), value.into());
         self
     }
+    /// Compress bodies larger than `t` bytes; `None` disables compression.
+    /// Disable or raise this for high-throughput ingest over a fast LAN where
+    /// gzip CPU outweighs the bandwidth saved. See [`WriteOptions::gzip_threshold`].
     pub fn gzip_threshold(mut self, t: Option<usize>) -> Self {
         self.options.gzip_threshold = t;
         self
@@ -231,6 +266,18 @@ impl<'a, W: WriteInput> WriteRequest<'a, W> {
         self.options = opts;
         self
     }
+
+    /// Override the retry policy for this write (defaults to the client's).
+    pub fn retry(mut self, policy: RetryConfig) -> Self {
+        self.retry = Some(policy);
+        self
+    }
+
+    /// Disable retries for this write.
+    pub fn no_retry(mut self) -> Self {
+        self.retry = Some(RetryConfig::disabled());
+        self
+    }
 }
 
 impl<'a, W: WriteInput + Send + 'a> IntoFuture for WriteRequest<'a, W> {
@@ -241,6 +288,7 @@ impl<'a, W: WriteInput + Send + 'a> IntoFuture for WriteRequest<'a, W> {
         let client = self.client;
         let data = self.data.take().expect("data already taken");
         let options = self.options;
+        let policy = self.retry.unwrap_or_else(|| client.config.retry.clone());
         Box::pin(async move {
             let max_inflight = options.max_inflight.max(1);
             let batches = data.into_lp_batches(&options);
@@ -248,25 +296,25 @@ impl<'a, W: WriteInput + Send + 'a> IntoFuture for WriteRequest<'a, W> {
             if max_inflight == 1 {
                 for batch in batches {
                     let bytes = batch?;
-                    client.send_lp(bytes, &options).await?;
+                    client.send_lp(bytes, &options, &policy).await?;
                 }
                 return Ok(());
             }
 
             let options = Arc::new(options);
+            let policy = Arc::new(policy);
             stream::iter(batches)
-                .map(|b| b.map(|bytes| (bytes, Arc::clone(&options))))
-                .try_for_each_concurrent(Some(max_inflight), |(bytes, opts)| async move {
-                    client.send_lp(bytes, &opts).await
+                .map(|b| b.map(|bytes| (bytes, Arc::clone(&options), Arc::clone(&policy))))
+                .try_for_each_concurrent(Some(max_inflight), |(bytes, opts, pol)| async move {
+                    client.send_lp(bytes, &opts, &pol).await
                 })
                 .await
         })
     }
 }
 
-
 /// Builder produced by [`Client::sql`], [`Client::influxql`], or
-/// [`Client::query`] — chain options, then `.await` (for a collected
+/// [`Client::query`]; chain options, then `.await` (for a collected
 /// [`QueryResult`]) or `.stream()` (for a streaming [`BatchStream`]).
 pub struct QueryRequest<'a> {
     client: &'a Client,
@@ -274,6 +322,7 @@ pub struct QueryRequest<'a> {
     query_type: QueryType,
     params: QueryParameters,
     headers: HashMap<String, String>,
+    retry: Option<RetryConfig>,
 }
 
 impl<'a> QueryRequest<'a> {
@@ -302,18 +351,70 @@ impl<'a> QueryRequest<'a> {
         self
     }
 
+    /// Override the retry policy for this query (defaults to the client's).
+    pub fn retry(mut self, policy: RetryConfig) -> Self {
+        self.retry = Some(policy);
+        self
+    }
+
+    /// Disable retries for this query.
+    pub fn no_retry(mut self) -> Self {
+        self.retry = Some(RetryConfig::disabled());
+        self
+    }
+
     /// Open the query as a streaming [`BatchStream`] instead of collecting.
     /// Use this for results too large to materialise in memory.
+    ///
+    /// Only the connection setup is retried; once batches start arriving a
+    /// stream can't be replayed, so mid-stream errors propagate to the caller.
     pub async fn stream(self) -> Result<BatchStream> {
-        let flight = self.client.flight().await?;
+        let policy = self
+            .retry
+            .clone()
+            .unwrap_or_else(|| self.client.config.retry.clone());
         let opts = QueryOptions {
             query_type: self.query_type,
             headers: self.headers,
         };
         let params = (!self.params.is_empty()).then_some(self.params);
-        flight
-            .stream(&self.query, &self.client.config.database, &opts, params.as_ref())
-            .await
+
+        let mut attempt: u32 = 0;
+        loop {
+            let result = async {
+                let flight = self.client.flight().await?;
+                flight
+                    .stream(
+                        &self.query,
+                        &self.client.config.database,
+                        &opts,
+                        params.as_ref(),
+                    )
+                    .await
+            }
+            .await;
+
+            match result {
+                Ok(s) => return Ok(s),
+                Err(e) => {
+                    if attempt >= policy.max_retries || !is_retryable_query_err(&e) {
+                        return Err(e);
+                    }
+                    tokio::time::sleep(policy.backoff(attempt)).await;
+                    attempt += 1;
+                }
+            }
+        }
+    }
+}
+
+/// Whether a query error is a transient failure worth retrying.
+fn is_retryable_query_err(e: &Error) -> bool {
+    match e {
+        Error::Flight(status) => retry::retryable_tonic(status.code()),
+        Error::Transport(_) => true,
+        Error::Timeout(_) => true,
+        _ => false,
     }
 }
 
@@ -323,19 +424,58 @@ impl<'a> IntoFuture for QueryRequest<'a> {
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(async move {
-            let flight = self.client.flight().await?;
+            let timeout = self.client.config.query_timeout;
+            let policy = self
+                .retry
+                .clone()
+                .unwrap_or_else(|| self.client.config.retry.clone());
             let opts = QueryOptions {
                 query_type: self.query_type,
                 headers: self.headers,
             };
             let params = (!self.params.is_empty()).then_some(self.params);
-            flight
-                .query(&self.query, &self.client.config.database, &opts, params.as_ref())
-                .await
+
+            let start = Instant::now();
+            let mut attempt: u32 = 0;
+            loop {
+                // `timeout` is per attempt; collected queries are read-only and
+                // safe to re-issue in full.
+                let fut = async {
+                    let flight = self.client.flight().await?;
+                    flight
+                        .query(
+                            &self.query,
+                            &self.client.config.database,
+                            &opts,
+                            params.as_ref(),
+                        )
+                        .await
+                };
+                let outcome = match tokio::time::timeout(timeout, fut).await {
+                    Ok(inner) => inner,
+                    Err(_) => Err(Error::Timeout(timeout)),
+                };
+
+                match outcome {
+                    Ok(result) => return Ok(result),
+                    Err(e) => {
+                        if attempt >= policy.max_retries || !is_retryable_query_err(&e) {
+                            return Err(e);
+                        }
+                        let delay = policy.backoff(attempt);
+                        if let Some(budget) = policy.max_elapsed {
+                            if start.elapsed() + delay > budget {
+                                return Err(e);
+                            }
+                        }
+                        tokio::time::sleep(delay).await;
+                        attempt += 1;
+                    }
+                }
+            }
         })
     }
 }
-
 
 fn build_http_client(config: &ClientConfig) -> Result<HttpClient> {
     let mut builder = ClientBuilder::new()
@@ -397,14 +537,62 @@ fn gzip_compress(data: Vec<u8>) -> Result<Vec<u8>> {
         .map_err(|e| Error::Config(format!("gzip finalization failed: {e}")))
 }
 
-/// Parse server error responses from the write API.
-async fn handle_write_response(resp: Response) -> Result<()> {
-    let status = resp.status();
-    if status.is_success() {
-        return Ok(());
-    }
+/// Outcome of a single write attempt, before any backoff decision.
+enum WriteAttempt {
+    Ok,
+    /// Transient, safe to retry. `last` is surfaced if retries are exhausted;
+    /// `after` is the server-suggested delay from `Retry-After`, if any.
+    Retry {
+        after: Option<Duration>,
+        last: Error,
+    },
+    /// Deterministic; do not retry (auth, bad request, partial write, etc.).
+    Fatal(Error),
+}
 
-    let code = status.as_u16();
+/// Send one write request and classify the result into a [`WriteAttempt`].
+async fn send_write_once(req: reqwest::RequestBuilder) -> WriteAttempt {
+    match req.send().await {
+        Err(e) => {
+            let retryable = retry::retryable_reqwest(&e);
+            let err = Error::Http(e);
+            if retryable {
+                WriteAttempt::Retry {
+                    after: None,
+                    last: err,
+                }
+            } else {
+                WriteAttempt::Fatal(err)
+            }
+        }
+        Ok(resp) => {
+            let status = resp.status();
+            if status.is_success() {
+                return WriteAttempt::Ok;
+            }
+            let code = status.as_u16();
+            let retry_after = resp
+                .headers()
+                .get(RETRY_AFTER)
+                .and_then(|v| v.to_str().ok())
+                .and_then(retry::parse_retry_after);
+            // A partial write is a 400, so it falls through to Fatal here:
+            // a deterministic data error, never a transient one.
+            let err = parse_write_error(code, resp).await;
+            if retry::retryable_status(code) {
+                WriteAttempt::Retry {
+                    after: retry_after,
+                    last: err,
+                }
+            } else {
+                WriteAttempt::Fatal(err)
+            }
+        }
+    }
+}
+
+/// Parse a non-2xx write response body into an [`Error`] (partial write vs server).
+async fn parse_write_error(code: u16, resp: Response) -> Error {
     let body = resp.text().await.unwrap_or_default();
 
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) {
@@ -415,9 +603,9 @@ async fn handle_write_response(resp: Response) -> Result<()> {
             .unwrap_or(false);
 
         if is_partial && v.get("data").and_then(|d| d.as_array()).is_some() {
-            return Err(Error::PartialWrite(PartialWriteError {
+            return Error::PartialWrite(PartialWriteError {
                 line_errors: parse_line_errors(&v),
-            }));
+            });
         }
 
         let msg = v
@@ -427,10 +615,13 @@ async fn handle_write_response(resp: Response) -> Result<()> {
             .unwrap_or(&body)
             .to_owned();
 
-        return Err(Error::Server { code, message: msg });
+        return Error::Server { code, message: msg };
     }
 
-    Err(Error::Server { code, message: body })
+    Error::Server {
+        code,
+        message: body,
+    }
 }
 
 fn parse_line_errors(v: &serde_json::Value) -> Vec<LineError> {
@@ -452,4 +643,3 @@ fn parse_line_errors(v: &serde_json::Value) -> Vec<LineError> {
         })
         .unwrap_or_default()
 }
-

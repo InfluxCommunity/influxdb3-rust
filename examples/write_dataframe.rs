@@ -13,6 +13,30 @@
 //! export INFLUX_DATABASE=mydb
 //! cargo run --example write_dataframe --features polars
 //! ```
+//!
+//! ## Ingesting a parquet or CSV file
+//!
+//! File IO lives in your code, not the client: read the file with polars, then
+//! hand the frame to `DataFrameWrite`. Enable the reader you need on polars in
+//! your own Cargo.toml (`features = ["parquet"]` or `["csv"]`):
+//!
+//! ```ignore
+//! use std::fs::File;
+//! use polars::prelude::*;
+//!
+//! let df = ParquetReader::new(File::open("sensors.parquet")?).finish()?;
+//! client
+//!     .write(
+//!         DataFrameWrite::new(&df, "sensor_data")
+//!             .tags(&["host", "region"])
+//!             .timestamp_column("time"),
+//!     )
+//!     .await?;
+//! ```
+//!
+//! CSV works the same via `CsvReadOptions`, but its columns infer as strings
+//! unless you supply dtypes; cast the numeric and bool columns before writing
+//! or they will land as string fields.
 
 use influxdb3_client::write_dataframe::DataFrameWrite;
 use influxdb3_client::Client;

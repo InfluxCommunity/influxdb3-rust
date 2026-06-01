@@ -2,12 +2,11 @@
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use arrow::record_batch::RecordBatch;
 use arrow_flight::{
-    flight_service_client::FlightServiceClient,
-    decode::FlightRecordBatchStream,
-    Ticket,
+    decode::FlightRecordBatchStream, flight_service_client::FlightServiceClient, Ticket,
 };
 use arrow_schema::SchemaRef;
 use bytes::Bytes;
@@ -40,6 +39,7 @@ impl FlightQueryClient {
         token: Option<&str>,
         auth_scheme: &str,
         ssl_roots_path: Option<&str>,
+        connect_timeout: Duration,
     ) -> Result<Self, Error> {
         let parsed = Url::parse(host_url)?;
         let tls = parsed.scheme() == "https";
@@ -56,7 +56,8 @@ impl FlightQueryClient {
         };
 
         let endpoint: Endpoint = Channel::from_shared(endpoint_url)
-            .map_err(|e| Error::Config(e.to_string()))?;
+            .map_err(|e| Error::Config(e.to_string()))?
+            .connect_timeout(connect_timeout);
 
         let endpoint = if tls {
             let mut tls_config = ClientTlsConfig::new().with_native_roots();
@@ -83,9 +84,8 @@ impl FlightQueryClient {
 
     /// Open a streaming query and return a [`BatchStream`].
     ///
-    /// Takes `&self` (not `&mut self`) and clones the underlying gRPC client —
-    /// `Channel` is `Arc`-backed so this is cheap, and allows multiple queries
-    /// to be in flight concurrently on the same client.
+    /// Clones the underlying gRPC client per call; `Channel` is `Arc`-backed, so
+    /// concurrent queries multiplex on the same connection.
     pub(crate) async fn stream(
         &self,
         query_str: &str,
@@ -94,15 +94,17 @@ impl FlightQueryClient {
         params: Option<&HashMap<String, JsonValue>>,
     ) -> Result<BatchStream, Error> {
         let ticket_payload = build_ticket(query_str, database, options, params);
-        let ticket = Ticket { ticket: Bytes::from(ticket_payload) };
+        let ticket = Ticket {
+            ticket: Bytes::from(ticket_payload),
+        };
 
         let mut request = Request::new(ticket);
 
         if let Some(tok) = &self.token {
             let auth_value = format!("{} {}", self.auth_scheme, tok);
-            let meta: MetadataValue<tonic::metadata::Ascii> = auth_value
-                .parse()
-                .map_err(|_| Error::Config("token contains characters invalid in gRPC metadata".into()))?;
+            let meta: MetadataValue<tonic::metadata::Ascii> = auth_value.parse().map_err(|_| {
+                Error::Config("token contains characters invalid in gRPC metadata".into())
+            })?;
             request.metadata_mut().insert("authorization", meta);
         }
 
@@ -115,7 +117,7 @@ impl FlightQueryClient {
             }
         }
 
-        // Clone the gRPC client — the underlying Channel is Arc-backed.
+        // Channel is Arc-backed, so cloning the client is cheap.
         let mut client = self.inner.clone();
         let response = client.do_get(request).await?;
         let raw = response.into_inner();
@@ -149,9 +151,7 @@ impl FlightQueryClient {
             batches.push(batch);
         }
 
-        let schema = schema.unwrap_or_else(|| {
-            std::sync::Arc::new(arrow_schema::Schema::empty())
-        });
+        let schema = schema.unwrap_or_else(|| std::sync::Arc::new(arrow_schema::Schema::empty()));
 
         Ok(QueryResult { schema, batches })
     }
@@ -159,7 +159,7 @@ impl FlightQueryClient {
 
 /// Streaming iterator over query result [`RecordBatch`]es.
 ///
-/// Use this when the result is too large to materialise in memory — the
+/// Use this when the result is too large to materialise in memory. The
 /// underlying gRPC stream is consumed lazily as you poll.
 ///
 /// ```rust,no_run
@@ -222,7 +222,10 @@ mod tests {
         assert!(v.get("params").is_none());
 
         // InfluxQL + params
-        let opts = QueryOptions { query_type: QueryType::InfluxQL, ..Default::default() };
+        let opts = QueryOptions {
+            query_type: QueryType::InfluxQL,
+            ..Default::default()
+        };
         let mut p = HashMap::new();
         p.insert("loc".into(), json!("Paris"));
         let t = build_ticket("SHOW MEASUREMENTS", "db", &opts, Some(&p));

@@ -1,2 +1,4 @@
 /target
 TODO.md
+*.rs~
+*.md~
