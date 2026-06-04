@@ -19,6 +19,8 @@ idiomatic Rust API.
 
 ## Installation
 
+Requires Rust 1.86 or later.
+
 ```bash
 cargo add influxdb3-client
 ```
