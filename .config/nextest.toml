@@ -1,0 +1,9 @@
+[store]
+dir = "test-results/nextest"
+
+[profile.ci]
+fail-fast = false
+
+[profile.ci.junit]
+path = "junit.xml"
+store-failure-output = true
