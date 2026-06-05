@@ -2,14 +2,12 @@
 name = "influxdb3-client"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.86"
 description = "Rust client for InfluxDB 3 Core and Enterprise"
 license = "MIT"
 readme = "README.md"
-# TODO: point at the real repository once it is created.
 repository = "https://github.com/InfluxCommunity/influxdb3-rust"
 documentation = "https://docs.rs/influxdb3-client"
-# Provisional minimum supported Rust version; verify before publishing.
-rust-version = "1.75"
 keywords = ["influxdb", "time-series", "database", "arrow", "flight"]
 categories = ["database", "api-bindings"]
 
