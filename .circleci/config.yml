@@ -57,6 +57,19 @@ jobs:
             - cargo-cache-v1-{{ arch }}-<< parameters.rust-image >>-
 
       - run:
+          name: Check MSRV compatibility
+          command: |
+            if [[ "<< parameters.rust-image >>" == "cimg/rust:1.86" ]]; then
+              CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 cargo check --locked --all-targets
+            else
+              CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 cargo check --locked --all-targets --all-features
+            fi
+
+      - run:
+          name: Check package
+          command: cargo package --locked
+
+      - run:
           name: Install cargo-nextest
           command: |
             case "$(uname -m)" in
@@ -75,10 +88,6 @@ jobs:
             cargo nextest --version
 
       - run:
-          name: Check package
-          command: cargo package
-
-      - run:
           name: Setup InfluxDB service
           command: |
             ./scripts/influxdb-setup.sh \
@@ -88,7 +97,12 @@ jobs:
 
       - run:
           name: Run tests
-          command: CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 cargo nextest run --all-features --profile ci
+          command: |
+            if [[ "<< parameters.rust-image >>" == "cimg/rust:1.86" ]]; then
+              CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 cargo nextest run --profile ci
+            else
+              CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 cargo nextest run --all-features --profile ci
+            fi
 
       - store_test_results:
           path: test-results
