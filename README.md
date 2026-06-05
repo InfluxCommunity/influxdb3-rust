@@ -19,7 +19,7 @@ idiomatic Rust API.
 
 ## Installation
 
-Requires Rust 1.86 or later.
+Requires Rust 1.86 or later. The optional `polars` feature requires Rust 1.88 or later.
 
 ```bash
 cargo add influxdb3-client

@@ -88,7 +88,12 @@ jobs:
 
       - run:
           name: Run tests
-          command: CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 cargo nextest run --all-features --profile ci
+          command: |
+            if [[ "<< parameters.rust-image >>" == "cimg/rust:1.86" ]]; then
+              CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 cargo nextest run --profile ci
+            else
+              CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 cargo nextest run --all-features --profile ci
+            fi
 
       - store_test_results:
           path: test-results
