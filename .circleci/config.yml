@@ -34,6 +34,21 @@ executors:
           INFLUXDB3_DB_DIR: /var/lib/influxdb3/data
     resource_class: arm.medium
 
+commands:
+  upload-codecov-amd64:
+    steps:
+      - run:
+          name: Collecting coverage reports
+          command: |
+            curl -Os https://uploader.codecov.io/latest/linux/codecov
+            curl -Os https://uploader.codecov.io/latest/linux/codecov.SHA256SUM
+            curl -Os https://uploader.codecov.io/latest/linux/codecov.SHA256SUM.sig
+            curl -s https://keybase.io/codecovsecurity/pgp_keys.asc | gpg --no-default-keyring --keyring trustedkeys.gpg --import
+            gpgv codecov.SHA256SUM.sig codecov.SHA256SUM
+            shasum -a 256 -c codecov.SHA256SUM
+            chmod +x ./codecov
+            ./codecov
+
 jobs:
   tests-rust:
     parameters:
@@ -87,6 +102,23 @@ jobs:
             curl -LsSf "$nextest_url" | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
             cargo nextest --version
 
+      - when:
+          condition:
+            and:
+              - equal: [ docker-amd64-image, << parameters.exe >> ]
+              - equal: [ << pipeline.parameters.default-rust-image >>, << parameters.rust-image >> ]
+          steps:
+            - restore_cache:
+                name: Restoring Cargo Tools Cache
+                keys:
+                  - cargo-tools-v1-{{ arch }}-<< parameters.rust-image >>
+
+            - run:
+                name: Install coverage tools
+                command: |
+                  rustup component add llvm-tools-preview
+                  command -v cargo-llvm-cov || cargo install cargo-llvm-cov --locked
+
       - run:
           name: Setup InfluxDB service
           command: |
@@ -98,11 +130,28 @@ jobs:
       - run:
           name: Run tests
           command: |
-            if [[ "<< parameters.rust-image >>" == "cimg/rust:1.86" ]]; then
+            if [[ "<< parameters.exe >>" == "docker-amd64-image" && "<< parameters.rust-image >>" == "<< pipeline.parameters.default-rust-image >>" ]]; then
+              CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 cargo llvm-cov nextest --all-features --profile ci --lcov --output-path lcov.info
+            elif [[ "<< parameters.rust-image >>" == "cimg/rust:1.86" ]]; then
               CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 cargo nextest run --profile ci
             else
               CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 cargo nextest run --all-features --profile ci
             fi
+
+      - when:
+          condition:
+            and:
+              - equal: [ docker-amd64-image, << parameters.exe >> ]
+              - equal: [ << pipeline.parameters.default-rust-image >>, << parameters.rust-image >> ]
+          steps:
+            - upload-codecov-amd64
+            - store_artifacts:
+                path: lcov.info
+            - save_cache:
+                name: Saving Cargo Tools Cache
+                key: cargo-tools-v1-{{ arch }}-<< parameters.rust-image >>
+                paths:
+                  - ~/.cargo/bin
 
       - store_test_results:
           path: test-results
