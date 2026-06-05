@@ -31,7 +31,7 @@ reqwest = { version = "0.12", default-features = false, features = [
 arrow        = { version = "53", features = ["ipc"] }
 arrow-array  = "53"
 arrow-schema = "53"
-arrow-flight = { version = "53", features = ["tls"] }
+arrow-flight = { version = "54", features = ["tls"] }
 
 # gRPC transport
 tonic = { version = "0.12", features = ["tls", "tls-roots"] }
