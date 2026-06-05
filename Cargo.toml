@@ -30,7 +30,7 @@ reqwest = { version = "0.12", default-features = false, features = [
 # Arrow + Flight (gRPC query transport)
 arrow        = { version = "53", features = ["ipc"] }
 arrow-array  = "53"
-arrow-schema = "53"
+arrow-schema = "58"
 arrow-flight = { version = "53", features = ["tls"] }
 
 # gRPC transport
