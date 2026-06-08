@@ -168,6 +168,7 @@ fn from_env() {
         "INFLUX_HOST",
         "INFLUX_TOKEN",
         "INFLUX_DATABASE",
+        "INFLUX_BUCKET",
         "INFLUX_ORG",
         "INFLUX_AUTH_SCHEME",
         "INFLUX_PRECISION",
