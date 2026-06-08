@@ -88,7 +88,7 @@ impl ClientConfig {
     ///
     /// Supported variables:
     /// - `INFLUX_HOST` - InfluxDB host URL (required).
-    /// - `INFLUX_DATABASE` / `INFLUX_BUCKET` - database name (required).
+    /// - `INFLUX_DATABASE` - database name (required).
     /// - `INFLUX_TOKEN` - authentication token.
     /// - `INFLUX_AUTH_SCHEME` - authentication scheme.
     /// - `INFLUX_ORG` - organization name.
@@ -100,7 +100,6 @@ impl ClientConfig {
     pub fn from_env() -> Result<Self, Error> {
         let host = std::env::var("INFLUX_HOST").map_err(|_| Error::EnvVar("INFLUX_HOST".into()))?;
         let database = std::env::var("INFLUX_DATABASE")
-            .or_else(|_| std::env::var("INFLUX_BUCKET"))
             .map_err(|_| Error::EnvVar("INFLUX_DATABASE".into()))?;
 
         let token = std::env::var("INFLUX_TOKEN").ok();

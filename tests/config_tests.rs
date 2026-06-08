@@ -119,7 +119,6 @@ fn from_env() {
     std::env::set_var("INFLUX_HOST", "https://env-host");
     std::env::remove_var("INFLUX_TOKEN");
     std::env::remove_var("INFLUX_DATABASE");
-    std::env::remove_var("INFLUX_BUCKET");
     std::env::remove_var("INFLUX_ORG");
     assert!(ClientConfig::from_env()
         .unwrap_err()
@@ -168,7 +167,6 @@ fn from_env() {
         "INFLUX_HOST",
         "INFLUX_TOKEN",
         "INFLUX_DATABASE",
-        "INFLUX_BUCKET",
         "INFLUX_ORG",
         "INFLUX_AUTH_SCHEME",
         "INFLUX_PRECISION",
