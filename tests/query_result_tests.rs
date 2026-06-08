@@ -2,7 +2,8 @@
 use std::sync::Arc;
 
 use arrow_array::{
-    BooleanArray, Float64Array, Int64Array, RecordBatch, StringArray, TimestampNanosecondArray,
+    BooleanArray, Float64Array, Int64Array, LargeBinaryArray, RecordBatch, StringArray,
+    TimestampNanosecondArray,
 };
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
 use influxdb3_client::query::{extract_value, QueryResult, Value};
@@ -81,6 +82,10 @@ fn value_api() {
     assert_eq!(
         extract_value(&BooleanArray::from(vec![true]), 0),
         Value::Bool(true)
+    );
+    assert_eq!(
+        extract_value(&LargeBinaryArray::from_vec(vec![b"payload".as_slice()]), 0),
+        Value::Binary(b"payload".to_vec())
     );
     assert_eq!(
         extract_value(

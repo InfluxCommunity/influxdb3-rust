@@ -5,9 +5,10 @@ use std::sync::Arc;
 
 use arrow_array::array::{
     Array, BinaryArray, BooleanArray, Decimal128Array, Decimal256Array, DictionaryArray,
-    Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array, LargeStringArray,
-    StringArray, TimestampMicrosecondArray, TimestampMillisecondArray, TimestampNanosecondArray,
-    TimestampSecondArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
+    Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array, LargeBinaryArray,
+    LargeStringArray, StringArray, TimestampMicrosecondArray, TimestampMillisecondArray,
+    TimestampNanosecondArray, TimestampSecondArray, UInt16Array, UInt32Array, UInt64Array,
+    UInt8Array,
 };
 use arrow_array::types::{
     Int16Type, Int32Type, Int64Type, Int8Type, UInt16Type, UInt32Type, UInt64Type, UInt8Type,
@@ -460,10 +461,18 @@ pub fn extract_value(array: &dyn Array, row: usize) -> Value {
                 .value(row)
                 .to_owned(),
         ),
-        Binary | LargeBinary => Value::Binary(
+        Binary => Value::Binary(
             array
                 .as_any()
                 .downcast_ref::<BinaryArray>()
+                .unwrap()
+                .value(row)
+                .to_owned(),
+        ),
+        LargeBinary => Value::Binary(
+            array
+                .as_any()
+                .downcast_ref::<LargeBinaryArray>()
                 .unwrap()
                 .value(row)
                 .to_owned(),
