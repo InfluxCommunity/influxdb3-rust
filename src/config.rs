@@ -84,9 +84,19 @@ impl ClientConfig {
         ClientConfigBuilder::default()
     }
 
-    /// Parse `INFLUX_HOST`, `INFLUX_TOKEN`, `INFLUX_DATABASE`, and `INFLUX_ORG`
-    /// from the process environment. `INFLUX_HOST` and `INFLUX_DATABASE` are
-    /// required; token and org are optional.
+    /// Parse client configuration from process environment variables.
+    ///
+    /// Supported variables:
+    /// - `INFLUX_HOST` - InfluxDB host URL (required).
+    /// - `INFLUX_DATABASE` / `INFLUX_BUCKET` - database name (required).
+    /// - `INFLUX_TOKEN` - authentication token.
+    /// - `INFLUX_AUTH_SCHEME` - authentication scheme.
+    /// - `INFLUX_ORG` - organization name.
+    /// - `INFLUX_PRECISION` - write precision (`ns`, `us`, `ms`, `s`, or long form).
+    /// - `INFLUX_GZIP_THRESHOLD` - gzip threshold in bytes.
+    /// - `INFLUX_WRITE_NO_SYNC` - skip WAL synchronization for writes.
+    /// - `INFLUX_WRITE_ACCEPT_PARTIAL` - accept partial writes.
+    /// - `INFLUX_WRITE_USE_V2_API` - use the v2 write endpoint.
     pub fn from_env() -> Result<Self, Error> {
         let host = std::env::var("INFLUX_HOST").map_err(|_| Error::EnvVar("INFLUX_HOST".into()))?;
         let database = std::env::var("INFLUX_DATABASE")
@@ -131,7 +141,16 @@ impl ClientConfig {
     /// https://cluster.influxdata.io/?token=TOKEN&database=DB&org=ORG
     /// ```
     ///
-    /// `database` (or `bucket`) is required; returns an error if absent.
+    /// Supported query parameters:
+    /// - `token` - authentication token.
+    /// - `database` / `bucket` - database name (required).
+    /// - `org` - organization name.
+    /// - `authScheme` - authentication scheme.
+    /// - `precision` - write precision (`ns`, `us`, `ms`, `s`, or long form).
+    /// - `gzipThreshold` - gzip threshold in bytes.
+    /// - `writeNoSync` - skip WAL synchronization for writes.
+    /// - `writeAcceptPartial` - accept partial writes.
+    /// - `writeUseV2Api` - use the v2 write endpoint.
     pub fn from_connection_string(cs: &str) -> Result<Self, Error> {
         let url = Url::parse(cs)?;
         let host = match url.port() {
