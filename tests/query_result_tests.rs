@@ -2,8 +2,10 @@
 use std::sync::Arc;
 
 use arrow_array::{
-    BooleanArray, Float64Array, Int64Array, LargeBinaryArray, RecordBatch, StringArray,
-    TimestampNanosecondArray,
+    Array, BinaryArray, BooleanArray, Float32Array, Float64Array, Int16Array, Int32Array,
+    Int64Array, Int8Array, LargeBinaryArray, LargeStringArray, RecordBatch, StringArray,
+    TimestampMicrosecondArray, TimestampMillisecondArray, TimestampNanosecondArray,
+    TimestampSecondArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
 };
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
 use influxdb3_client::query::{extract_value, QueryResult, Value};
@@ -67,33 +69,108 @@ fn iteration() {
 #[test]
 fn value_api() {
     // Type extraction across Arrow array types.
-    assert_eq!(
-        extract_value(&Int64Array::from(vec![None as Option<i64>]), 0),
-        Value::Null
-    );
-    assert_eq!(
-        extract_value(&Float64Array::from(vec![2.5]), 0),
-        Value::F64(2.5)
-    );
-    assert_eq!(
-        extract_value(&StringArray::from(vec!["x"]), 0),
-        Value::String("x".into())
-    );
-    assert_eq!(
-        extract_value(&BooleanArray::from(vec![true]), 0),
-        Value::Bool(true)
-    );
-    assert_eq!(
-        extract_value(&LargeBinaryArray::from_vec(vec![b"payload".as_slice()]), 0),
-        Value::Binary(b"payload".to_vec())
-    );
-    assert_eq!(
-        extract_value(
-            &TimestampNanosecondArray::from(vec![1_700_000_000_000_000_000_i64]),
-            0
+    let cases: Vec<(&str, Arc<dyn Array>, Value)> = vec![
+        (
+            "null",
+            Arc::new(Int64Array::from(vec![None as Option<i64>])),
+            Value::Null,
         ),
-        Value::Timestamp(1_700_000_000_000_000_000),
-    );
+        (
+            "bool",
+            Arc::new(BooleanArray::from(vec![true])),
+            Value::Bool(true),
+        ),
+        ("int8", Arc::new(Int8Array::from(vec![1_i8])), Value::I8(1)),
+        (
+            "int16",
+            Arc::new(Int16Array::from(vec![2_i16])),
+            Value::I16(2),
+        ),
+        (
+            "int32",
+            Arc::new(Int32Array::from(vec![3_i32])),
+            Value::I32(3),
+        ),
+        (
+            "int64",
+            Arc::new(Int64Array::from(vec![4_i64])),
+            Value::I64(4),
+        ),
+        (
+            "uint8",
+            Arc::new(UInt8Array::from(vec![5_u8])),
+            Value::U8(5),
+        ),
+        (
+            "uint16",
+            Arc::new(UInt16Array::from(vec![6_u16])),
+            Value::U16(6),
+        ),
+        (
+            "uint32",
+            Arc::new(UInt32Array::from(vec![7_u32])),
+            Value::U32(7),
+        ),
+        (
+            "uint64",
+            Arc::new(UInt64Array::from(vec![8_u64])),
+            Value::U64(8),
+        ),
+        (
+            "float32",
+            Arc::new(Float32Array::from(vec![1.5_f32])),
+            Value::F32(1.5),
+        ),
+        (
+            "float64",
+            Arc::new(Float64Array::from(vec![2.5_f64])),
+            Value::F64(2.5),
+        ),
+        (
+            "utf8",
+            Arc::new(StringArray::from(vec!["x"])),
+            Value::String("x".into()),
+        ),
+        (
+            "large_utf8",
+            Arc::new(LargeStringArray::from(vec!["large"])),
+            Value::String("large".into()),
+        ),
+        (
+            "binary",
+            Arc::new(BinaryArray::from_vec(vec![b"payload".as_slice()])),
+            Value::Binary(b"payload".to_vec()),
+        ),
+        (
+            "large_binary",
+            Arc::new(LargeBinaryArray::from_vec(vec![b"payload".as_slice()])),
+            Value::Binary(b"payload".to_vec()),
+        ),
+        (
+            "timestamp_s",
+            Arc::new(TimestampSecondArray::from(vec![1_i64])),
+            Value::Timestamp(1_000_000_000),
+        ),
+        (
+            "timestamp_ms",
+            Arc::new(TimestampMillisecondArray::from(vec![1_i64])),
+            Value::Timestamp(1_000_000),
+        ),
+        (
+            "timestamp_us",
+            Arc::new(TimestampMicrosecondArray::from(vec![1_i64])),
+            Value::Timestamp(1_000),
+        ),
+        (
+            "timestamp_ns",
+            Arc::new(TimestampNanosecondArray::from(vec![1_i64])),
+            Value::Timestamp(1),
+        ),
+    ];
+
+    for (name, array, expected) in cases {
+        assert_eq!(extract_value(array.as_ref(), 0), expected, "{name}");
+    }
 
     // Coercion helpers
     assert_eq!(Value::I64(42).as_f64(), Some(42.0));
