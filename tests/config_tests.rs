@@ -1,5 +1,5 @@
 /// ClientConfig construction and parsing.
-use influxdb3_client::ClientConfig;
+use influxdb3_client::{ClientConfig, Precision};
 
 #[test]
 fn construction_and_connection_string() {
@@ -43,6 +43,34 @@ fn construction_and_connection_string() {
     let cfg = ClientConfig::from_connection_string("https://h/?token=T&bucket=mybucket").unwrap();
     assert_eq!(cfg.database, "mybucket");
 
+    // Connection string supports common client config options.
+    let cfg = ClientConfig::from_connection_string(
+        "https://cluster.example.io/?token=TOK&database=DB&authScheme=Token\
+         &precision=ms&gzipThreshold=64&writeNoSync=true\
+         &writeAcceptPartial=false&writeUseV2Api=true",
+    )
+    .unwrap();
+    assert_eq!(cfg.auth_scheme, "Token");
+    assert_eq!(cfg.write_options.precision, Precision::Millisecond);
+    assert_eq!(cfg.write_options.gzip_threshold, Some(64));
+    assert!(cfg.write_options.no_sync);
+    assert!(!cfg.write_options.accept_partial);
+    assert!(cfg.write_options.use_v2_api);
+
+    for precision in [
+        "ns",
+        "nanosecond",
+        "us",
+        "microsecond",
+        "ms",
+        "millisecond",
+        "s",
+        "second",
+    ] {
+        let cs = format!("https://h/?token=T&database=db&precision={precision}");
+        ClientConfig::from_connection_string(&cs).unwrap();
+    }
+
     // Connection string with no database is an error.
     let err = ClientConfig::from_connection_string("http://localhost:8086/?token=T").unwrap_err();
     assert!(
@@ -72,18 +100,36 @@ fn from_env() {
     // Full happy path.
     std::env::set_var("INFLUX_TOKEN", "env-token");
     std::env::set_var("INFLUX_DATABASE", "env-db");
+    std::env::set_var("INFLUX_AUTH_SCHEME", "Token");
+    std::env::set_var("INFLUX_PRECISION", "ms");
+    std::env::set_var("INFLUX_GZIP_THRESHOLD", "64");
+    std::env::set_var("INFLUX_WRITE_NO_SYNC", "true");
+    std::env::set_var("INFLUX_WRITE_ACCEPT_PARTIAL", "false");
+    std::env::set_var("INFLUX_WRITE_USE_V2_API", "true");
     std::env::set_var("INFLUX_ORG", "env-org");
     let cfg = ClientConfig::from_env().unwrap();
     assert_eq!(cfg.host_url(), "https://env-host");
     assert_eq!(cfg.token.as_deref(), Some("env-token"));
     assert_eq!(cfg.database, "env-db");
     assert_eq!(cfg.org.as_deref(), Some("env-org"));
+    assert_eq!(cfg.auth_scheme, "Token");
+    assert_eq!(cfg.write_options.precision, Precision::Millisecond);
+    assert_eq!(cfg.write_options.gzip_threshold, Some(64));
+    assert!(cfg.write_options.no_sync);
+    assert!(!cfg.write_options.accept_partial);
+    assert!(cfg.write_options.use_v2_api);
 
     for v in [
         "INFLUX_HOST",
         "INFLUX_TOKEN",
         "INFLUX_DATABASE",
         "INFLUX_ORG",
+        "INFLUX_AUTH_SCHEME",
+        "INFLUX_PRECISION",
+        "INFLUX_GZIP_THRESHOLD",
+        "INFLUX_WRITE_NO_SYNC",
+        "INFLUX_WRITE_ACCEPT_PARTIAL",
+        "INFLUX_WRITE_USE_V2_API",
     ] {
         std::env::remove_var(v);
     }

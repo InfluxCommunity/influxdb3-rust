@@ -3,7 +3,7 @@ use std::time::Duration;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use url::Url;
 
-use crate::{error::Error, retry::RetryConfig, write::WriteOptions};
+use crate::{error::Error, precision::Precision, retry::RetryConfig, write::WriteOptions};
 
 /// Configuration for the InfluxDB 3 client.
 ///
@@ -94,14 +94,35 @@ impl ClientConfig {
             .map_err(|_| Error::EnvVar("INFLUX_DATABASE".into()))?;
 
         let token = std::env::var("INFLUX_TOKEN").ok();
+        let auth_scheme = std::env::var("INFLUX_AUTH_SCHEME").ok();
         let org = std::env::var("INFLUX_ORG").ok();
+        let mut write_options = WriteOptions::default();
+        if let Ok(value) = std::env::var("INFLUX_PRECISION") {
+            write_options.precision = parse_precision(&value)?;
+        }
+        if let Ok(value) = std::env::var("INFLUX_GZIP_THRESHOLD") {
+            write_options.gzip_threshold = Some(parse_usize("INFLUX_GZIP_THRESHOLD", &value)?);
+        }
+        if let Ok(value) = std::env::var("INFLUX_WRITE_NO_SYNC") {
+            write_options.no_sync = parse_bool("INFLUX_WRITE_NO_SYNC", &value)?;
+        }
+        if let Ok(value) = std::env::var("INFLUX_WRITE_ACCEPT_PARTIAL") {
+            write_options.accept_partial = parse_bool("INFLUX_WRITE_ACCEPT_PARTIAL", &value)?;
+        }
+        if let Ok(value) = std::env::var("INFLUX_WRITE_USE_V2_API") {
+            write_options.use_v2_api = parse_bool("INFLUX_WRITE_USE_V2_API", &value)?;
+        }
 
-        ClientConfig::builder()
+        let mut builder = ClientConfig::builder()
             .host(host)
             .database(database)
             .token_opt(token)
             .org_opt(org)
-            .build()
+            .write_options(write_options);
+        if let Some(auth_scheme) = auth_scheme {
+            builder = builder.auth_scheme(auth_scheme);
+        }
+        builder.build()
     }
 
     /// Parse a URL-formatted connection string, e.g.:
@@ -116,6 +137,7 @@ impl ClientConfig {
         let host = format!("{}://{}", url.scheme(), url.authority());
 
         let mut builder = ClientConfig::builder().host(host);
+        let mut write_options = WriteOptions::default();
 
         for (key, value) in url.query_pairs() {
             match key.as_ref() {
@@ -128,11 +150,31 @@ impl ClientConfig {
                 "org" => {
                     builder = builder.org(value.into_owned());
                 }
+                "authScheme" => {
+                    builder = builder.auth_scheme(value.into_owned());
+                }
+                "precision" => {
+                    write_options.precision = parse_precision(value.as_ref())?;
+                }
+                "gzipThreshold" => {
+                    write_options.gzip_threshold =
+                        Some(parse_usize("gzipThreshold", value.as_ref())?);
+                }
+                "writeNoSync" => {
+                    write_options.no_sync = parse_bool("writeNoSync", value.as_ref())?;
+                }
+                "writeAcceptPartial" => {
+                    write_options.accept_partial =
+                        parse_bool("writeAcceptPartial", value.as_ref())?;
+                }
+                "writeUseV2Api" => {
+                    write_options.use_v2_api = parse_bool("writeUseV2Api", value.as_ref())?;
+                }
                 _other => {}
             }
         }
 
-        builder.build()
+        builder.write_options(write_options).build()
     }
 
     /// Return the normalised host URL (trailing slash stripped).
@@ -152,6 +194,24 @@ impl ClientConfig {
                 .map_err(|_| Error::Config("token contains invalid header characters".into())),
         }
     }
+}
+
+fn parse_precision(value: &str) -> Result<Precision, Error> {
+    value
+        .parse()
+        .map_err(|e| Error::Config(format!("invalid precision '{value}': {e}")))
+}
+
+fn parse_usize(name: &str, value: &str) -> Result<usize, Error> {
+    value
+        .parse()
+        .map_err(|e| Error::Config(format!("invalid {name} '{value}': {e}")))
+}
+
+fn parse_bool(name: &str, value: &str) -> Result<bool, Error> {
+    value
+        .parse()
+        .map_err(|e| Error::Config(format!("invalid {name} '{value}': {e}")))
 }
 
 /// Fluent builder for [`ClientConfig`].
