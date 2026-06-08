@@ -153,14 +153,17 @@ impl ClientConfig {
     /// - `writeUseV2Api` - use the v2 write endpoint.
     pub fn from_connection_string(cs: &str) -> Result<Self, Error> {
         let url = Url::parse(cs)?;
-        let host = match url.port() {
-            Some(port) => format!(
-                "{}://{}:{port}",
-                url.scheme(),
-                url.host_str().unwrap_or_default()
-            ),
-            None => format!("{}://{}", url.scheme(), url.host_str().unwrap_or_default()),
-        };
+        let mut host_url = url.clone();
+        host_url
+            .set_password(None)
+            .map_err(|_| Error::Config("invalid connection string host".into()))?;
+        host_url
+            .set_username("")
+            .map_err(|_| Error::Config("invalid connection string host".into()))?;
+        host_url.set_path("");
+        host_url.set_query(None);
+        host_url.set_fragment(None);
+        let host = host_url.to_string();
 
         let mut builder = ClientConfig::builder().host(host);
         let mut write_options = WriteOptions::default();

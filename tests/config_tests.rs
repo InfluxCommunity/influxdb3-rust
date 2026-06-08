@@ -48,6 +48,12 @@ fn construction_and_connection_string() {
     assert!(!cfg.host_url().contains("user:pass"));
     assert_eq!(cfg.token.as_deref(), Some("TOK"));
 
+    // IPv6 hosts keep brackets and explicit ports.
+    let cfg =
+        ClientConfig::from_connection_string("http://[::1]:8181/?token=TOK&database=DB").unwrap();
+    assert_eq!(cfg.host_url(), "http://[::1]:8181");
+    assert_eq!(cfg.database, "DB");
+
     // `bucket` is an alias for `database` (v2 compat).
     let cfg = ClientConfig::from_connection_string("https://h/?token=T&bucket=mybucket").unwrap();
     assert_eq!(cfg.database, "mybucket");
