@@ -134,7 +134,14 @@ impl ClientConfig {
     /// `database` (or `bucket`) is required; returns an error if absent.
     pub fn from_connection_string(cs: &str) -> Result<Self, Error> {
         let url = Url::parse(cs)?;
-        let host = format!("{}://{}", url.scheme(), url.authority());
+        let host = match url.port() {
+            Some(port) => format!(
+                "{}://{}:{port}",
+                url.scheme(),
+                url.host_str().unwrap_or_default()
+            ),
+            None => format!("{}://{}", url.scheme(), url.host_str().unwrap_or_default()),
+        };
 
         let mut builder = ClientConfig::builder().host(host);
         let mut write_options = WriteOptions::default();
