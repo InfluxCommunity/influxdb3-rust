@@ -71,6 +71,20 @@ fn construction_and_connection_string() {
         ClientConfig::from_connection_string(&cs).unwrap();
     }
 
+    for cs in [
+        "https://h/?token=T&database=db&precision=invalid",
+        "https://h/?token=T&database=db&gzipThreshold=abc",
+        "https://h/?token=T&database=db&writeNoSync=invalid",
+        "https://h/?token=T&database=db&writeAcceptPartial=invalid",
+        "https://h/?token=T&database=db&writeUseV2Api=invalid",
+    ] {
+        let err = ClientConfig::from_connection_string(cs).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid"),
+            "expected invalid config error for {cs}, got: {err}"
+        );
+    }
+
     // Connection string with no database is an error.
     let err = ClientConfig::from_connection_string("http://localhost:8086/?token=T").unwrap_err();
     assert!(
@@ -118,6 +132,22 @@ fn from_env() {
     assert!(cfg.write_options.no_sync);
     assert!(!cfg.write_options.accept_partial);
     assert!(cfg.write_options.use_v2_api);
+
+    for (name, value) in [
+        ("INFLUX_PRECISION", "invalid"),
+        ("INFLUX_GZIP_THRESHOLD", "abc"),
+        ("INFLUX_WRITE_NO_SYNC", "invalid"),
+        ("INFLUX_WRITE_ACCEPT_PARTIAL", "invalid"),
+        ("INFLUX_WRITE_USE_V2_API", "invalid"),
+    ] {
+        std::env::set_var(name, value);
+        let err = ClientConfig::from_env().unwrap_err();
+        assert!(
+            err.to_string().contains("invalid"),
+            "expected invalid config error for {name}={value}, got: {err}"
+        );
+        std::env::remove_var(name);
+    }
 
     for v in [
         "INFLUX_HOST",
