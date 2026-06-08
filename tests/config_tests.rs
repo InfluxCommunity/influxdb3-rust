@@ -31,6 +31,14 @@ fn construction_and_connection_string() {
     assert_eq!(cfg.database, "DB");
     assert_eq!(cfg.org.as_deref(), Some("ORG"));
 
+    // Connection string preserves explicit non-default port.
+    let cfg = ClientConfig::from_connection_string(
+        "https://cluster.example.io:8443/?token=TOK&database=DB",
+    )
+    .unwrap();
+    assert_eq!(cfg.host_url(), "https://cluster.example.io:8443");
+    assert_eq!(cfg.database, "DB");
+
     // `bucket` is an alias for `database` (v2 compat).
     let cfg = ClientConfig::from_connection_string("https://h/?token=T&bucket=mybucket").unwrap();
     assert_eq!(cfg.database, "mybucket");
