@@ -44,6 +44,26 @@ async fn lp_string_with_overrides() {
 }
 
 #[tokio::test]
+async fn v2_write_uses_bucket_query_parameter() {
+    let mut server = Server::new_async().await;
+    let m = server
+        .mock("POST", "/api/v2/write")
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("bucket".into(), "testdb".into()),
+            Matcher::UrlEncoded("precision".into(), "nanosecond".into()),
+        ]))
+        .match_header("Authorization", "Bearer test-token")
+        .match_header("Content-Type", Matcher::Regex("text/plain.*".into()))
+        .with_status(204)
+        .create_async()
+        .await;
+
+    let client = make_client(&server).await;
+    client.write("cpu usage=1.0").use_v2_api().await.unwrap();
+    m.assert_async().await;
+}
+
+#[tokio::test]
 async fn points_batch_splitting() {
     // 5 points at batch_size=2 means 3 sequential requests.
     let mut server = Server::new_async().await;

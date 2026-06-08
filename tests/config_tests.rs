@@ -54,10 +54,6 @@ fn construction_and_connection_string() {
     assert_eq!(cfg.host_url(), "http://[::1]:8181");
     assert_eq!(cfg.database, "DB");
 
-    // `bucket` is an alias for `database` (v2 compat).
-    let cfg = ClientConfig::from_connection_string("https://h/?token=T&bucket=mybucket").unwrap();
-    assert_eq!(cfg.database, "mybucket");
-
     // Connection string supports common client config options.
     let cfg = ClientConfig::from_connection_string(
         "https://cluster.example.io/?token=TOK&database=DB&authScheme=Token\

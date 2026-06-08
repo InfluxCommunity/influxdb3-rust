@@ -142,7 +142,7 @@ impl ClientConfig {
     ///
     /// Supported query parameters:
     /// - `token` - authentication token.
-    /// - `database` / `bucket` - database name (required).
+    /// - `database` - database name (required).
     /// - `org` - organization name.
     /// - `authScheme` - authentication scheme.
     /// - `precision` - write precision (`ns`, `us`, `ms`, `s`, or long form).
@@ -172,7 +172,7 @@ impl ClientConfig {
                 "token" => {
                     builder = builder.token(value.into_owned());
                 }
-                "database" | "bucket" => {
+                "database" => {
                     builder = builder.database(value.into_owned());
                 }
                 "org" => {
