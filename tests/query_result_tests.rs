@@ -2,13 +2,13 @@
 use std::sync::Arc;
 
 use arrow_array::{
-    Array, BinaryArray, BooleanArray, Float32Array, Float64Array, Int16Array, Int32Array,
-    Int64Array, Int8Array, LargeBinaryArray, LargeStringArray, RecordBatch, StringArray,
-    TimestampMicrosecondArray, TimestampMillisecondArray, TimestampNanosecondArray,
+    ArrayRef, BinaryArray, BooleanArray, Date32Array, Float32Array, Float64Array, Int16Array,
+    Int32Array, Int64Array, Int8Array, LargeBinaryArray, LargeStringArray, RecordBatch,
+    StringArray, TimestampMicrosecondArray, TimestampMillisecondArray, TimestampNanosecondArray,
     TimestampSecondArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
 };
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
-use influxdb3_client::query::{extract_value, QueryResult, Value};
+use influxdb3_client::{query::Value, Error, QueryResult};
 
 fn make_batch() -> RecordBatch {
     let schema = Arc::new(Schema::new(vec![
@@ -36,6 +36,24 @@ fn make_batch() -> RecordBatch {
         ],
     )
     .unwrap()
+}
+
+fn extract_values(array: ArrayRef) -> Result<Vec<Value>, Error> {
+    let schema = Arc::new(Schema::new(vec![Field::new(
+        "value",
+        array.data_type().clone(),
+        true,
+    )]));
+    let batch = RecordBatch::try_new(Arc::clone(&schema), vec![array]).unwrap();
+    QueryResult::new(schema, vec![batch]).rows().map(|rows| {
+        rows.into_iter()
+            .map(|row| row.at(0).unwrap().clone())
+            .collect()
+    })
+}
+
+fn extract_first_value(array: ArrayRef) -> Result<Value, Error> {
+    Ok(extract_values(array)?.remove(0))
 }
 
 #[test]
@@ -69,7 +87,7 @@ fn iteration() {
 #[test]
 fn value_api() {
     // Type extraction across Arrow array types.
-    let cases: Vec<(&str, Arc<dyn Array>, Value)> = vec![
+    let cases: Vec<(&str, ArrayRef, Value)> = vec![
         (
             "null",
             Arc::new(Int64Array::from(vec![None as Option<i64>])),
@@ -169,7 +187,7 @@ fn value_api() {
     ];
 
     for (name, array, expected) in cases {
-        assert_eq!(extract_value(array.as_ref(), 0), expected, "{name}");
+        assert_eq!(extract_first_value(array).unwrap(), expected, "{name}");
     }
 
     // Coercion helpers
@@ -189,7 +207,15 @@ fn value_api() {
     use arrow_array::DictionaryArray;
     let dict: DictionaryArray<arrow_array::types::Int32Type> =
         vec!["us-east", "us-west", "us-east"].into_iter().collect();
-    assert_eq!(extract_value(&dict, 0), Value::String("us-east".into()));
-    assert_eq!(extract_value(&dict, 1), Value::String("us-west".into()));
-    assert_eq!(extract_value(&dict, 2), Value::String("us-east".into()));
+    assert_eq!(
+        extract_values(Arc::new(dict)).unwrap(),
+        vec![
+            Value::String("us-east".into()),
+            Value::String("us-west".into()),
+            Value::String("us-east".into())
+        ]
+    );
+
+    let err = extract_first_value(Arc::new(Date32Array::from(vec![1_i32]))).unwrap_err();
+    assert!(matches!(err, Error::UnsupportedArrowType { .. }));
 }
