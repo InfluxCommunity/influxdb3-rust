@@ -2,7 +2,8 @@
 use std::sync::Arc;
 
 use arrow_array::types::{
-    ArrowDictionaryKeyType, Int32Type, Int64Type, UInt16Type, UInt32Type, UInt64Type, UInt8Type,
+    ArrowDictionaryKeyType, Int16Type, Int32Type, Int64Type, Int8Type, UInt16Type, UInt32Type,
+    UInt64Type, UInt8Type,
 };
 use arrow_array::{
     ArrayRef, BinaryArray, BooleanArray, Date32Array, Decimal128Array, Decimal256Array,
@@ -224,6 +225,8 @@ fn value_api() {
 
     // InfluxDB 3 returns tag columns as Dictionary(Int32, Utf8); the row value
     // must be the underlying string, not a debug dump of the column.
+    assert_dictionary_values::<Int8Type>("dictionary_int8");
+    assert_dictionary_values::<Int16Type>("dictionary_int16");
     assert_dictionary_values::<Int32Type>("dictionary_int32");
     assert_dictionary_values::<Int64Type>("dictionary_int64");
     assert_dictionary_values::<UInt8Type>("dictionary_uint8");
