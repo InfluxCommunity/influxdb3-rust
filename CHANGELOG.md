@@ -1,14 +1,12 @@
-# Changelog
+# Change Log
 
-All notable changes to this project are documented here. The format is based on
-[Keep a Changelog](https://keepachangelog.com/), and this project adheres to
-[Semantic Versioning](https://semver.org/).
+## 0.2.0 [unreleased]
 
-## [0.1.0] - Unreleased
+## 0.1.0 [2026-06-08]
 
 Initial release.
 
-### Added
+### Features
 
 - Async client for InfluxDB 3 Core and Enterprise over HTTP (writes) and Arrow
   Flight (queries).
