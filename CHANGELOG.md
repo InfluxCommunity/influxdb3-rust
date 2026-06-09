@@ -6,6 +6,10 @@
 
 1. [#12](https://github.com/InfluxCommunity/influxdb3-rust/pull/12): Improve client configuration from environment variables and connection strings, including auth scheme and write options; preserve explicit ports and strip userinfo from normalized hosts. The legacy `bucket` and `INFLUX_BUCKET` aliases are removed in favor of `database` and `INFLUX_DATABASE`.
 
+### Bug Fixes
+
+1. [#13](https://github.com/InfluxCommunity/influxdb3-rust/pull/13): Improve Arrow query result type support and report unsupported types explicitly.
+
 ## 0.1.0 [2026-06-08]
 
 Initial release.
