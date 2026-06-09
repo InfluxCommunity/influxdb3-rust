@@ -345,16 +345,11 @@ impl Iterator for QueryIterator {
         let row = self.row_idx;
         self.row_idx += 1;
 
-        let mut values = Vec::with_capacity(batch.num_columns());
-        for col_idx in 0..self.schema.fields().len() {
-            let col = batch.column(col_idx);
-            match extract_value(col.as_ref(), row) {
-                Ok(value) => values.push(value),
-                Err(err) => return Some(Err(err)),
-            }
-        }
+        let values = (0..batch.num_columns())
+            .map(|col_idx| extract_value(batch.column(col_idx).as_ref(), row))
+            .collect::<Result<Vec<_>, _>>();
 
-        Some(Ok(Row {
+        Some(values.map(|values| Row {
             values,
             columns: Arc::clone(&self.columns),
             index: Arc::clone(&self.index),
