@@ -1,6 +1,7 @@
 /// QueryResult / QueryIterator / Value tests using in-memory Arrow batches.
 use std::sync::Arc;
 
+use arrow_array::types::{UInt16Type, UInt32Type, UInt64Type};
 use arrow_array::{
     ArrayRef, BinaryArray, BooleanArray, Date32Array, Decimal128Array, Decimal256Array,
     DictionaryArray, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array,
@@ -8,7 +9,6 @@ use arrow_array::{
     TimestampMillisecondArray, TimestampNanosecondArray, TimestampSecondArray, UInt16Array,
     UInt32Array, UInt64Array, UInt8Array,
 };
-use arrow_array::types::{UInt16Type, UInt32Type, UInt64Type};
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
 use influxdb3_client::{query::Value, Error, QueryResult};
 
