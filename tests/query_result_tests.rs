@@ -258,7 +258,7 @@ fn value_api() {
         Value::String("123.45".into())
     );
 
-    let decimal256 = Decimal256Array::from(vec![12345_i32.into()])
+    let decimal256 = Decimal256Array::from(vec![Some(12345_i32.into())])
         .with_precision_and_scale(10, 2)
         .unwrap();
     assert_eq!(
