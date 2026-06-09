@@ -2,11 +2,13 @@
 use std::sync::Arc;
 
 use arrow_array::{
-    ArrayRef, BinaryArray, BooleanArray, Date32Array, Float32Array, Float64Array, Int16Array,
-    Int32Array, Int64Array, Int8Array, LargeBinaryArray, LargeStringArray, RecordBatch,
-    StringArray, TimestampMicrosecondArray, TimestampMillisecondArray, TimestampNanosecondArray,
-    TimestampSecondArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
+    ArrayRef, BinaryArray, BooleanArray, Date32Array, Decimal128Array, Decimal256Array,
+    DictionaryArray, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array,
+    LargeBinaryArray, LargeStringArray, RecordBatch, StringArray, TimestampMicrosecondArray,
+    TimestampMillisecondArray, TimestampNanosecondArray, TimestampSecondArray, UInt16Array,
+    UInt32Array, UInt64Array, UInt8Array,
 };
+use arrow_array::types::{UInt16Type, UInt32Type, UInt64Type};
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
 use influxdb3_client::{query::Value, Error, QueryResult};
 
@@ -204,7 +206,6 @@ fn value_api() {
 
     // InfluxDB 3 returns tag columns as Dictionary(Int32, Utf8); the row value
     // must be the underlying string, not a debug dump of the column.
-    use arrow_array::DictionaryArray;
     let dict: DictionaryArray<arrow_array::types::Int32Type> =
         vec!["us-east", "us-west", "us-east"].into_iter().collect();
     assert_eq!(
@@ -214,6 +215,55 @@ fn value_api() {
             Value::String("us-west".into()),
             Value::String("us-east".into())
         ]
+    );
+
+    let dict_u16: DictionaryArray<UInt16Type> =
+        vec!["alpha", "beta", "alpha"].into_iter().collect();
+    assert_eq!(
+        extract_values(Arc::new(dict_u16)).unwrap(),
+        vec![
+            Value::String("alpha".into()),
+            Value::String("beta".into()),
+            Value::String("alpha".into())
+        ]
+    );
+
+    let dict_u32: DictionaryArray<UInt32Type> =
+        vec!["alpha", "beta", "alpha"].into_iter().collect();
+    assert_eq!(
+        extract_values(Arc::new(dict_u32)).unwrap(),
+        vec![
+            Value::String("alpha".into()),
+            Value::String("beta".into()),
+            Value::String("alpha".into())
+        ]
+    );
+
+    let dict_u64: DictionaryArray<UInt64Type> =
+        vec!["alpha", "beta", "alpha"].into_iter().collect();
+    assert_eq!(
+        extract_values(Arc::new(dict_u64)).unwrap(),
+        vec![
+            Value::String("alpha".into()),
+            Value::String("beta".into()),
+            Value::String("alpha".into())
+        ]
+    );
+
+    let decimal128 = Decimal128Array::from(vec![12345])
+        .with_precision_and_scale(10, 2)
+        .unwrap();
+    assert_eq!(
+        extract_first_value(Arc::new(decimal128)).unwrap(),
+        Value::String("123.45".into())
+    );
+
+    let decimal256 = Decimal256Array::from(vec![12345_i32.into()])
+        .with_precision_and_scale(10, 2)
+        .unwrap();
+    assert_eq!(
+        extract_first_value(Arc::new(decimal256)).unwrap(),
+        Value::String("123.45".into())
     );
 
     let err = extract_first_value(Arc::new(Date32Array::from(vec![1_i32]))).unwrap_err();
