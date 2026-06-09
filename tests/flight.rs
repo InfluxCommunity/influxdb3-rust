@@ -1,12 +1,15 @@
 use std::{
     convert::Infallible,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
     time::Duration,
 };
 
 use arrow_flight::{FlightData, Ticket};
 use futures_util::stream::Empty as EmptyStream;
-use influxdb3_client::{Client, ClientConfig};
+use influxdb3_client::{Client, ClientConfig, RetryConfig};
 use tokio::{net::TcpListener, sync::oneshot};
 use tonic::{
     codegen::{http, Body, BoxFuture, Context, Poll, Service, StdError},
@@ -17,9 +20,20 @@ use tonic::{
 
 type MockStream<T> = EmptyStream<std::result::Result<T, Status>>;
 
+fn fast_retry(max_retries: u32) -> RetryConfig {
+    RetryConfig {
+        max_retries,
+        base_delay: Duration::from_millis(1),
+        max_delay: Duration::from_millis(1),
+        ..RetryConfig::default()
+    }
+}
+
 #[derive(Clone)]
 struct CapturingFlightService {
     metadata: Arc<Mutex<Option<MetadataMap>>>,
+    do_get_calls: Arc<AtomicUsize>,
+    failures_remaining: Arc<AtomicUsize>,
 }
 
 impl<B> Service<http::Request<B>> for CapturingFlightService
@@ -39,8 +53,14 @@ where
         match req.uri().path() {
             "/arrow.flight.protocol.FlightService/DoGet" => {
                 let metadata = Arc::clone(&self.metadata);
+                let do_get_calls = Arc::clone(&self.do_get_calls);
+                let failures_remaining = Arc::clone(&self.failures_remaining);
                 Box::pin(async move {
-                    let method = DoGetSvc { metadata };
+                    let method = DoGetSvc {
+                        metadata,
+                        do_get_calls,
+                        failures_remaining,
+                    };
                     let codec = tonic::codec::ProstCodec::default();
                     let mut grpc = tonic::server::Grpc::new(codec);
                     Ok(grpc.server_streaming(method, req).await)
@@ -64,6 +84,8 @@ impl tonic::server::NamedService for CapturingFlightService {
 
 struct DoGetSvc {
     metadata: Arc<Mutex<Option<MetadataMap>>>,
+    do_get_calls: Arc<AtomicUsize>,
+    failures_remaining: Arc<AtomicUsize>,
 }
 
 impl tonic::server::ServerStreamingService<Ticket> for DoGetSvc {
@@ -73,7 +95,14 @@ impl tonic::server::ServerStreamingService<Ticket> for DoGetSvc {
 
     fn call(&mut self, request: Request<Ticket>) -> Self::Future {
         let metadata = Arc::clone(&self.metadata);
+        let do_get_calls = Arc::clone(&self.do_get_calls);
+        let failures_remaining = Arc::clone(&self.failures_remaining);
         Box::pin(async move {
+            do_get_calls.fetch_add(1, Ordering::SeqCst);
+            if failures_remaining.load(Ordering::SeqCst) > 0 {
+                failures_remaining.fetch_sub(1, Ordering::SeqCst);
+                return Err(Status::unavailable("transient query failure"));
+            }
             *metadata.lock().unwrap() = Some(request.metadata().clone());
             Ok(Response::new(futures_util::stream::empty()))
         })
@@ -86,6 +115,8 @@ async fn query_stream_sends_metadata_headers(
     let metadata = Arc::new(Mutex::new(None));
     let service = CapturingFlightService {
         metadata: Arc::clone(&metadata),
+        do_get_calls: Arc::new(AtomicUsize::new(0)),
+        failures_remaining: Arc::new(AtomicUsize::new(0)),
     };
 
     let listener = TcpListener::bind("127.0.0.1:0").await?;
@@ -128,6 +159,55 @@ async fn query_stream_sends_metadata_headers(
         captured.get("x-tracing-id").unwrap().to_str().unwrap(),
         "123"
     );
+
+    shutdown_tx.send(()).unwrap();
+    server.await??;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn query_stream_retries_transient_flight_errors(
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let do_get_calls = Arc::new(AtomicUsize::new(0));
+    let service = CapturingFlightService {
+        metadata: Arc::new(Mutex::new(None)),
+        do_get_calls: Arc::clone(&do_get_calls),
+        failures_remaining: Arc::new(AtomicUsize::new(1)),
+    };
+
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let incoming = TcpIncoming::from_listener(listener, true, None)?;
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+
+    let server = tokio::spawn(async move {
+        Server::builder()
+            .add_service(service)
+            .serve_with_incoming_shutdown(incoming, async {
+                let _ = shutdown_rx.await;
+            })
+            .await
+    });
+
+    let client = Client::new(
+        ClientConfig::builder()
+            .host(format!("http://{addr}"))
+            .token("TEST_TOKEN")
+            .database("db")
+            .query_timeout(Duration::from_secs(5))
+            .build()?,
+    )
+    .await?;
+
+    let stream = client
+        .sql("SELECT * FROM test")
+        .retry(fast_retry(1))
+        .stream()
+        .await?;
+    drop(stream);
+
+    assert_eq!(do_get_calls.load(Ordering::SeqCst), 2);
 
     shutdown_tx.send(()).unwrap();
     server.await??;
