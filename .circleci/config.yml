@@ -164,42 +164,10 @@ jobs:
             - ~/.cargo/git
             - target
 
-  lint:
-    executor: docker-amd64-image
-    steps:
-      - checkout
-
-      - restore_cache:
-          name: Restoring Cargo Cache
-          keys:
-            - cargo-cache-v1-{{ arch }}-<< pipeline.parameters.default-rust-image >>-{{ checksum "Cargo.lock" }}
-            - cargo-cache-v1-{{ arch }}-<< pipeline.parameters.default-rust-image >>-
-
-      - run:
-          name: Install Dependencies
-          command: rustup component add rustfmt clippy
-
-      - run:
-          name: Check formatting
-          command: cargo fmt --all --check
-
-      - run:
-          name: Lint rust code
-          command: cargo clippy --all-targets --all-features
-
-      - save_cache:
-          name: Saving Cargo Cache
-          key: cargo-cache-v1-{{ arch }}-<< pipeline.parameters.default-rust-image >>-{{ checksum "Cargo.lock" }}
-          paths:
-            - ~/.cargo/registry
-            - ~/.cargo/git
-            - target
-
 workflows:
   version: 2
   build:
     jobs:
-      - lint
       - tests-rust:
           matrix:
             parameters:

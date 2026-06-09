@@ -1,5 +1,29 @@
 # influxdb3-client
 
+<p align="center">
+    <a href="https://crates.io/crates/influxdb3-client">
+        <img src="https://img.shields.io/crates/v/influxdb3-client.svg" alt="Crates.io">
+    </a>
+    <a href="https://docs.rs/influxdb3-client">
+        <img src="https://docs.rs/influxdb3-client/badge.svg" alt="docs.rs">
+    </a>
+    <a href="https://github.com/InfluxCommunity/influxdb3-rust/actions/workflows/codeql-analysis.yml">
+        <img src="https://github.com/InfluxCommunity/influxdb3-rust/actions/workflows/codeql-analysis.yml/badge.svg?branch=main" alt="CodeQL analysis">
+    </a>
+    <a href="https://github.com/InfluxCommunity/influxdb3-rust/actions/workflows/linter.yml">
+        <img src="https://github.com/InfluxCommunity/influxdb3-rust/actions/workflows/linter.yml/badge.svg" alt="Lint Code Base">
+    </a>
+    <a href="https://dl.circleci.com/status-badge/redirect/gh/InfluxCommunity/influxdb3-rust/tree/main">
+        <img src="https://dl.circleci.com/status-badge/img/gh/InfluxCommunity/influxdb3-rust/tree/main.svg?style=svg" alt="CircleCI">
+    </a>
+    <a href="https://codecov.io/gh/InfluxCommunity/influxdb3-rust">
+        <img src="https://codecov.io/gh/InfluxCommunity/influxdb3-rust/branch/main/graph/badge.svg" alt="Code Cov">
+    </a>
+    <a href="https://app.slack.com/huddle/TH8RGQX5Z/C02UDUPLQKA">
+        <img src="https://img.shields.io/badge/slack-join_chat-white.svg?logo=slack&style=social" alt="Community Slack">
+    </a>
+</p>
+
 An async Rust client for [InfluxDB 3](https://www.influxdata.com/) Core and Enterprise.
 
 InfluxDB 3 is the latest generation of the InfluxDB time series engine, built on
@@ -9,8 +33,8 @@ historical query performance on top of the same engine. Both speak the same HTTP
 write API and serve queries over Arrow Flight, so this client works against
 either.
 
-- Write data guide: https://docs.influxdata.com/influxdb3/enterprise/write-data/
-- Downloads: https://www.influxdata.com/downloads/
+- [Write data guide](https://docs.influxdata.com/influxdb3/enterprise/write-data/)
+- [Downloads](https://www.influxdata.com/downloads/)
 
 This client is part of the InfluxDB 3 client family and mirrors the feature set
 of the official [Go](https://github.com/InfluxCommunity/influxdb3-go) and
