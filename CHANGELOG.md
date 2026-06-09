@@ -8,7 +8,8 @@
 
 ### Bug Fixes
 
-1. [#13](https://github.com/InfluxCommunity/influxdb3-rust/pull/13): Improve Arrow query result type support and report unsupported types explicitly.
+1. [#13](https://github.com/InfluxCommunity/influxdb3-rust/pull/13): Improve Arrow query result type support.
+   Unsupported Arrow types now produce `Error::UnsupportedArrowType` instead of `Null`.
 
 ## 0.1.0 [2026-06-08]
 
