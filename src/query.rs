@@ -362,6 +362,7 @@ impl Iterator for QueryIterator {
     }
 }
 
+/// Extract a single row value from an Arrow array column.
 fn extract_value(array: &dyn Array, row: usize) -> Result<Value, Error> {
     use arrow_schema::DataType::*;
 
