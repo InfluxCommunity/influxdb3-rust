@@ -33,8 +33,8 @@ historical query performance on top of the same engine. Both speak the same HTTP
 write API and serve queries over Arrow Flight, so this client works against
 either.
 
-- Write data guide: https://docs.influxdata.com/influxdb3/enterprise/write-data/
-- Downloads: https://www.influxdata.com/downloads/
+- [Write data guide](https://docs.influxdata.com/influxdb3/enterprise/write-data/)
+- [Downloads](https://www.influxdata.com/downloads/)
 
 This client is part of the InfluxDB 3 client family and mirrors the feature set
 of the official [Go](https://github.com/InfluxCommunity/influxdb3-go) and
