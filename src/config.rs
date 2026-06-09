@@ -3,7 +3,7 @@ use std::time::Duration;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use url::Url;
 
-use crate::{error::Error, retry::RetryConfig, write::WriteOptions};
+use crate::{error::Error, precision::Precision, retry::RetryConfig, write::WriteOptions};
 
 /// Configuration for the InfluxDB 3 client.
 ///
@@ -84,24 +84,54 @@ impl ClientConfig {
         ClientConfigBuilder::default()
     }
 
-    /// Parse `INFLUX_HOST`, `INFLUX_TOKEN`, `INFLUX_DATABASE`, and `INFLUX_ORG`
-    /// from the process environment. `INFLUX_HOST` and `INFLUX_DATABASE` are
-    /// required; token and org are optional.
+    /// Parse client configuration from process environment variables.
+    ///
+    /// Supported variables:
+    /// - `INFLUX_HOST` - InfluxDB host URL (required).
+    /// - `INFLUX_DATABASE` - database name (required).
+    /// - `INFLUX_TOKEN` - authentication token.
+    /// - `INFLUX_AUTH_SCHEME` - authentication scheme.
+    /// - `INFLUX_ORG` - organization name.
+    /// - `INFLUX_PRECISION` - write precision (`ns`, `us`, `ms`, `s`, or long form).
+    /// - `INFLUX_GZIP_THRESHOLD` - gzip threshold in bytes.
+    /// - `INFLUX_WRITE_NO_SYNC` - skip WAL synchronization for writes.
+    /// - `INFLUX_WRITE_ACCEPT_PARTIAL` - accept partial writes.
+    /// - `INFLUX_WRITE_USE_V2_API` - use the v2 write endpoint.
     pub fn from_env() -> Result<Self, Error> {
         let host = std::env::var("INFLUX_HOST").map_err(|_| Error::EnvVar("INFLUX_HOST".into()))?;
         let database = std::env::var("INFLUX_DATABASE")
-            .or_else(|_| std::env::var("INFLUX_BUCKET"))
             .map_err(|_| Error::EnvVar("INFLUX_DATABASE".into()))?;
 
         let token = std::env::var("INFLUX_TOKEN").ok();
+        let auth_scheme = std::env::var("INFLUX_AUTH_SCHEME").ok();
         let org = std::env::var("INFLUX_ORG").ok();
+        let mut write_options = WriteOptions::default();
+        if let Ok(value) = std::env::var("INFLUX_PRECISION") {
+            write_options.precision = parse_precision(&value)?;
+        }
+        if let Ok(value) = std::env::var("INFLUX_GZIP_THRESHOLD") {
+            write_options.gzip_threshold = Some(parse_usize("INFLUX_GZIP_THRESHOLD", &value)?);
+        }
+        if let Ok(value) = std::env::var("INFLUX_WRITE_NO_SYNC") {
+            write_options.no_sync = parse_bool("INFLUX_WRITE_NO_SYNC", &value)?;
+        }
+        if let Ok(value) = std::env::var("INFLUX_WRITE_ACCEPT_PARTIAL") {
+            write_options.accept_partial = parse_bool("INFLUX_WRITE_ACCEPT_PARTIAL", &value)?;
+        }
+        if let Ok(value) = std::env::var("INFLUX_WRITE_USE_V2_API") {
+            write_options.use_v2_api = parse_bool("INFLUX_WRITE_USE_V2_API", &value)?;
+        }
 
-        ClientConfig::builder()
+        let mut builder = ClientConfig::builder()
             .host(host)
             .database(database)
             .token_opt(token)
             .org_opt(org)
-            .build()
+            .write_options(write_options);
+        if let Some(auth_scheme) = auth_scheme {
+            builder = builder.auth_scheme(auth_scheme);
+        }
+        builder.build()
     }
 
     /// Parse a URL-formatted connection string, e.g.:
@@ -110,29 +140,69 @@ impl ClientConfig {
     /// https://cluster.influxdata.io/?token=TOKEN&database=DB&org=ORG
     /// ```
     ///
-    /// `database` (or `bucket`) is required; returns an error if absent.
+    /// Supported query parameters:
+    /// - `token` - authentication token.
+    /// - `database` - database name (required).
+    /// - `org` - organization name.
+    /// - `authScheme` - authentication scheme.
+    /// - `precision` - write precision (`ns`, `us`, `ms`, `s`, or long form).
+    /// - `gzipThreshold` - gzip threshold in bytes.
+    /// - `writeNoSync` - skip WAL synchronization for writes.
+    /// - `writeAcceptPartial` - accept partial writes.
+    /// - `writeUseV2Api` - use the v2 write endpoint.
     pub fn from_connection_string(cs: &str) -> Result<Self, Error> {
         let url = Url::parse(cs)?;
-        let host = format!("{}://{}", url.scheme(), url.host_str().unwrap_or_default());
+        let mut host_url = url.clone();
+        host_url
+            .set_password(None)
+            .map_err(|_| Error::Config("invalid connection string host".into()))?;
+        host_url
+            .set_username("")
+            .map_err(|_| Error::Config("invalid connection string host".into()))?;
+        host_url.set_path("");
+        host_url.set_query(None);
+        host_url.set_fragment(None);
+        let host = host_url.to_string();
 
         let mut builder = ClientConfig::builder().host(host);
+        let mut write_options = WriteOptions::default();
 
         for (key, value) in url.query_pairs() {
             match key.as_ref() {
                 "token" => {
                     builder = builder.token(value.into_owned());
                 }
-                "database" | "bucket" => {
+                "database" => {
                     builder = builder.database(value.into_owned());
                 }
                 "org" => {
                     builder = builder.org(value.into_owned());
                 }
+                "authScheme" => {
+                    builder = builder.auth_scheme(value.into_owned());
+                }
+                "precision" => {
+                    write_options.precision = parse_precision(value.as_ref())?;
+                }
+                "gzipThreshold" => {
+                    write_options.gzip_threshold =
+                        Some(parse_usize("gzipThreshold", value.as_ref())?);
+                }
+                "writeNoSync" => {
+                    write_options.no_sync = parse_bool("writeNoSync", value.as_ref())?;
+                }
+                "writeAcceptPartial" => {
+                    write_options.accept_partial =
+                        parse_bool("writeAcceptPartial", value.as_ref())?;
+                }
+                "writeUseV2Api" => {
+                    write_options.use_v2_api = parse_bool("writeUseV2Api", value.as_ref())?;
+                }
                 _other => {}
             }
         }
 
-        builder.build()
+        builder.write_options(write_options).build()
     }
 
     /// Return the normalised host URL (trailing slash stripped).
@@ -152,6 +222,24 @@ impl ClientConfig {
                 .map_err(|_| Error::Config("token contains invalid header characters".into())),
         }
     }
+}
+
+fn parse_precision(value: &str) -> Result<Precision, Error> {
+    value
+        .parse()
+        .map_err(|e| Error::Config(format!("invalid precision '{value}': {e}")))
+}
+
+fn parse_usize(name: &str, value: &str) -> Result<usize, Error> {
+    value
+        .parse()
+        .map_err(|e| Error::Config(format!("invalid {name} '{value}': {e}")))
+}
+
+fn parse_bool(name: &str, value: &str) -> Result<bool, Error> {
+    value
+        .parse()
+        .map_err(|e| Error::Config(format!("invalid {name} '{value}': {e}")))
 }
 
 /// Fluent builder for [`ClientConfig`].
