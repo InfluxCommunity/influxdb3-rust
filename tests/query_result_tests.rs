@@ -80,7 +80,7 @@ where
 #[test]
 fn iteration() {
     // Covers: IntoIterator, multi-batch traversal, Row indexing by name,
-    // empty result, and Row::into_map roundtrip.
+    // empty result, Row::into_map roundtrip, and iterator error propagation.
     let batch = make_batch();
     let schema = batch.schema();
     let rows: Vec<_> = QueryResult::new(schema.clone(), vec![batch.clone(), batch.clone()])
@@ -103,6 +103,23 @@ fn iteration() {
     // Empty result
     let empty = QueryResult::new(schema, vec![]);
     assert_eq!(empty.into_iter().count(), 0);
+
+    // Unsupported column type is yielded as the next iterator item error.
+    let unsupported_schema = Arc::new(Schema::new(vec![Field::new(
+        "value",
+        DataType::Date32,
+        true,
+    )]));
+    let unsupported_batch = RecordBatch::try_new(
+        Arc::clone(&unsupported_schema),
+        vec![Arc::new(Date32Array::from(vec![1_i32]))],
+    )
+    .unwrap();
+    let mut iter = QueryResult::new(unsupported_schema, vec![unsupported_batch]).into_iter();
+    assert!(matches!(
+        iter.next(),
+        Some(Err(Error::UnsupportedArrowType { .. }))
+    ));
 }
 
 #[test]
