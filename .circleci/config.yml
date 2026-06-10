@@ -69,7 +69,7 @@ jobs:
           name: Configure Cargo for CI
           command: |
             mkdir -p .cargo
-            cat > .cargo/config.toml <<'EOF'
+            cat > .cargo/config.toml \<<'EOF'
             [build]
             incremental = false
 
