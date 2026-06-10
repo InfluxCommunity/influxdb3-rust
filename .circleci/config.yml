@@ -74,11 +74,7 @@ jobs:
       - run:
           name: Check MSRV compatibility
           command: |
-            if [[ "<< parameters.rust-image >>" == "cimg/rust:1.86" ]]; then
-              CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 cargo check --locked --all-targets
-            else
-              CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 cargo check --locked --all-targets --all-features
-            fi
+            CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 cargo check --locked --all-targets --all-features
 
       - run:
           name: Check package
@@ -132,8 +128,6 @@ jobs:
           command: |
             if [[ "<< parameters.exe >>" == "docker-amd64-image" && "<< parameters.rust-image >>" == "<< pipeline.parameters.default-rust-image >>" ]]; then
               CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 cargo llvm-cov nextest --all-features --profile ci --lcov --output-path lcov.info
-            elif [[ "<< parameters.rust-image >>" == "cimg/rust:1.86" ]]; then
-              CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 cargo nextest run --profile ci
             else
               CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 cargo nextest run --all-features --profile ci
             fi
@@ -172,4 +166,4 @@ workflows:
           matrix:
             parameters:
               exe: [ docker-amd64-image, docker-arm64-image ]
-              rust-image: [ << pipeline.parameters.default-rust-image >>, "cimg/rust:1.86" ]
+              rust-image: [ << pipeline.parameters.default-rust-image >>, "cimg/rust:1.88" ]
