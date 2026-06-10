@@ -65,6 +65,21 @@ jobs:
     steps:
       - checkout
 
+      - run:
+          name: Configure Cargo for CI
+          command: |
+            mkdir -p .cargo
+            cat > .cargo/config.toml <<'EOF'
+            [build]
+            incremental = false
+
+            [profile.dev]
+            debug = 0
+
+            [profile.test]
+            debug = 0
+            EOF
+
       - restore_cache:
           name: Restoring Cargo Cache
           keys:
@@ -74,7 +89,7 @@ jobs:
       - run:
           name: Check MSRV compatibility
           command: |
-            CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 cargo check --locked --all-targets --all-features
+            cargo check --locked --all-targets --all-features
 
       - run:
           name: Check package
@@ -127,9 +142,9 @@ jobs:
           name: Run tests
           command: |
             if [[ "<< parameters.exe >>" == "docker-amd64-image" && "<< parameters.rust-image >>" == "<< pipeline.parameters.default-rust-image >>" ]]; then
-              CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 cargo llvm-cov nextest --all-features --profile ci --lcov --output-path lcov.info
+              cargo llvm-cov nextest --all-features --profile ci --lcov --output-path lcov.info
             else
-              CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 cargo nextest run --all-features --profile ci
+              cargo nextest run --all-features --profile ci
             fi
 
       - when:
@@ -166,4 +181,4 @@ workflows:
           matrix:
             parameters:
               exe: [ docker-amd64-image, docker-arm64-image ]
-              rust-image: [ << pipeline.parameters.default-rust-image >>, "cimg/rust:1.88" ]
+              rust-image: [ << pipeline.parameters.default-rust-image >>, "cimg/rust:1.89" ]
