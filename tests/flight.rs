@@ -234,8 +234,7 @@ async fn query_stream_retries_transient_flight_errors(
 }
 
 #[tokio::test]
-async fn query_stream_works_over_tls(
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn query_stream_works_over_tls() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let do_get_calls = Arc::new(AtomicUsize::new(0));
     let service = CapturingFlightService {
         metadata: Arc::new(Mutex::new(None)),
