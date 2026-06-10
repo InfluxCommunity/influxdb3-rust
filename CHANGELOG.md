@@ -4,7 +4,10 @@
 
 ### Features
 
-1. [#12](https://github.com/InfluxCommunity/influxdb3-rust/pull/12): Improve client configuration from environment variables and connection strings, including auth scheme and write options; preserve explicit ports and strip userinfo from normalized hosts. The legacy `bucket` and `INFLUX_BUCKET` aliases are removed in favor of `database` and `INFLUX_DATABASE`.
+1. [#12](https://github.com/InfluxCommunity/influxdb3-rust/pull/12): Expand client configuration support for environment variables and connection strings.
+   Add auth scheme and write option support.
+   Preserve explicit ports and strip userinfo from normalized hosts.
+   Remove the legacy `bucket` and `INFLUX_BUCKET` aliases in favor of `database` and `INFLUX_DATABASE`.
 
 ### Bug Fixes
 
