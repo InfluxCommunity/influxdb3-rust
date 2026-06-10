@@ -5,9 +5,10 @@ use std::sync::Arc;
 
 use arrow_array::array::{
     Array, BinaryArray, BooleanArray, Decimal128Array, Decimal256Array, DictionaryArray,
-    Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array, LargeStringArray,
-    StringArray, TimestampMicrosecondArray, TimestampMillisecondArray, TimestampNanosecondArray,
-    TimestampSecondArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
+    Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array, LargeBinaryArray,
+    LargeStringArray, StringArray, TimestampMicrosecondArray, TimestampMillisecondArray,
+    TimestampNanosecondArray, TimestampSecondArray, UInt16Array, UInt32Array, UInt64Array,
+    UInt8Array,
 };
 use arrow_array::types::{
     Int16Type, Int32Type, Int64Type, Int8Type, UInt16Type, UInt32Type, UInt64Type, UInt8Type,
@@ -344,13 +345,11 @@ impl Iterator for QueryIterator {
         let row = self.row_idx;
         self.row_idx += 1;
 
-        let mut values = Vec::with_capacity(batch.num_columns());
-        for col_idx in 0..self.schema.fields().len() {
-            let col = batch.column(col_idx);
-            values.push(extract_value(col.as_ref(), row));
-        }
+        let values = (0..batch.num_columns())
+            .map(|col_idx| extract_value(batch.column(col_idx).as_ref(), row))
+            .collect::<Result<Vec<_>, _>>();
 
-        Some(Ok(Row {
+        Some(values.map(|values| Row {
             values,
             columns: Arc::clone(&self.columns),
             index: Arc::clone(&self.index),
@@ -359,146 +358,154 @@ impl Iterator for QueryIterator {
 }
 
 /// Extract a single row value from an Arrow array column.
-pub fn extract_value(array: &dyn Array, row: usize) -> Value {
+fn extract_value(array: &dyn Array, row: usize) -> Result<Value, Error> {
     use arrow_schema::DataType::*;
 
     if array.is_null(row) {
-        return Value::Null;
+        return Ok(Value::Null);
     }
 
     match array.data_type() {
-        Boolean => Value::Bool(
+        Boolean => Ok(Value::Bool(
             array
                 .as_any()
                 .downcast_ref::<BooleanArray>()
                 .unwrap()
                 .value(row),
-        ),
-        Int8 => Value::I8(
+        )),
+        Int8 => Ok(Value::I8(
             array
                 .as_any()
                 .downcast_ref::<Int8Array>()
                 .unwrap()
                 .value(row),
-        ),
-        Int16 => Value::I16(
+        )),
+        Int16 => Ok(Value::I16(
             array
                 .as_any()
                 .downcast_ref::<Int16Array>()
                 .unwrap()
                 .value(row),
-        ),
-        Int32 => Value::I32(
+        )),
+        Int32 => Ok(Value::I32(
             array
                 .as_any()
                 .downcast_ref::<Int32Array>()
                 .unwrap()
                 .value(row),
-        ),
-        Int64 => Value::I64(
+        )),
+        Int64 => Ok(Value::I64(
             array
                 .as_any()
                 .downcast_ref::<Int64Array>()
                 .unwrap()
                 .value(row),
-        ),
-        UInt8 => Value::U8(
+        )),
+        UInt8 => Ok(Value::U8(
             array
                 .as_any()
                 .downcast_ref::<UInt8Array>()
                 .unwrap()
                 .value(row),
-        ),
-        UInt16 => Value::U16(
+        )),
+        UInt16 => Ok(Value::U16(
             array
                 .as_any()
                 .downcast_ref::<UInt16Array>()
                 .unwrap()
                 .value(row),
-        ),
-        UInt32 => Value::U32(
+        )),
+        UInt32 => Ok(Value::U32(
             array
                 .as_any()
                 .downcast_ref::<UInt32Array>()
                 .unwrap()
                 .value(row),
-        ),
-        UInt64 => Value::U64(
+        )),
+        UInt64 => Ok(Value::U64(
             array
                 .as_any()
                 .downcast_ref::<UInt64Array>()
                 .unwrap()
                 .value(row),
-        ),
-        Float32 => Value::F32(
+        )),
+        Float32 => Ok(Value::F32(
             array
                 .as_any()
                 .downcast_ref::<Float32Array>()
                 .unwrap()
                 .value(row),
-        ),
-        Float64 => Value::F64(
+        )),
+        Float64 => Ok(Value::F64(
             array
                 .as_any()
                 .downcast_ref::<Float64Array>()
                 .unwrap()
                 .value(row),
-        ),
-        Utf8 => Value::String(
+        )),
+        Utf8 => Ok(Value::String(
             array
                 .as_any()
                 .downcast_ref::<StringArray>()
                 .unwrap()
                 .value(row)
                 .to_owned(),
-        ),
-        LargeUtf8 => Value::String(
+        )),
+        LargeUtf8 => Ok(Value::String(
             array
                 .as_any()
                 .downcast_ref::<LargeStringArray>()
                 .unwrap()
                 .value(row)
                 .to_owned(),
-        ),
-        Binary | LargeBinary => Value::Binary(
+        )),
+        Binary => Ok(Value::Binary(
             array
                 .as_any()
                 .downcast_ref::<BinaryArray>()
                 .unwrap()
                 .value(row)
                 .to_owned(),
-        ),
-        Timestamp(arrow_schema::TimeUnit::Nanosecond, _) => Value::Timestamp(
+        )),
+        LargeBinary => Ok(Value::Binary(
+            array
+                .as_any()
+                .downcast_ref::<LargeBinaryArray>()
+                .unwrap()
+                .value(row)
+                .to_owned(),
+        )),
+        Timestamp(arrow_schema::TimeUnit::Nanosecond, _) => Ok(Value::Timestamp(
             array
                 .as_any()
                 .downcast_ref::<TimestampNanosecondArray>()
                 .unwrap()
                 .value(row),
-        ),
-        Timestamp(arrow_schema::TimeUnit::Microsecond, _) => Value::Timestamp(
+        )),
+        Timestamp(arrow_schema::TimeUnit::Microsecond, _) => Ok(Value::Timestamp(
             array
                 .as_any()
                 .downcast_ref::<TimestampMicrosecondArray>()
                 .unwrap()
                 .value(row)
                 * 1_000,
-        ),
-        Timestamp(arrow_schema::TimeUnit::Millisecond, _) => Value::Timestamp(
+        )),
+        Timestamp(arrow_schema::TimeUnit::Millisecond, _) => Ok(Value::Timestamp(
             array
                 .as_any()
                 .downcast_ref::<TimestampMillisecondArray>()
                 .unwrap()
                 .value(row)
                 * 1_000_000,
-        ),
-        Timestamp(arrow_schema::TimeUnit::Second, _) => Value::Timestamp(
+        )),
+        Timestamp(arrow_schema::TimeUnit::Second, _) => Ok(Value::Timestamp(
             array
                 .as_any()
                 .downcast_ref::<TimestampSecondArray>()
                 .unwrap()
                 .value(row)
                 * 1_000_000_000,
-        ),
+        )),
         // Dictionary-encoded columns: InfluxDB 3 returns tag columns as
         // Dictionary(Int32, Utf8).  Resolve the key for this row and recurse
         // into the values array, so the actual tag value is returned rather
@@ -523,25 +530,29 @@ pub fn extract_value(array: &dyn Array, row: usize) -> Value {
                 UInt16 => resolve!(UInt16Type),
                 UInt32 => resolve!(UInt32Type),
                 UInt64 => resolve!(UInt64Type),
-                _ => Value::Null,
+                _ => Err(Error::UnsupportedArrowType {
+                    data_type: array.data_type().to_string(),
+                }),
             }
         }
         // Decimals carry a scale that doesn't map onto an f64/i64 cleanly;
         // render them as their exact decimal string.
-        Decimal128(_, _) => Value::String(
+        Decimal128(_, _) => Ok(Value::String(
             array
                 .as_any()
                 .downcast_ref::<Decimal128Array>()
                 .unwrap()
                 .value_as_string(row),
-        ),
-        Decimal256(_, _) => Value::String(
+        )),
+        Decimal256(_, _) => Ok(Value::String(
             array
                 .as_any()
                 .downcast_ref::<Decimal256Array>()
                 .unwrap()
                 .value_as_string(row),
-        ),
-        _other => Value::Null,
+        )),
+        _other => Err(Error::UnsupportedArrowType {
+            data_type: array.data_type().to_string(),
+        }),
     }
 }

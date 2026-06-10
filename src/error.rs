@@ -77,4 +77,8 @@ pub enum Error {
     /// Required environment variable was not set
     #[error("environment variable '{0}' is not set")]
     EnvVar(String),
+
+    /// Query result contained an Arrow data type this client cannot decode.
+    #[error("unsupported Arrow data type in query result: {data_type}")]
+    UnsupportedArrowType { data_type: String },
 }

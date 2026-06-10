@@ -1,11 +1,19 @@
 /// QueryResult / QueryIterator / Value tests using in-memory Arrow batches.
 use std::sync::Arc;
 
+use arrow_array::types::{
+    ArrowDictionaryKeyType, Int16Type, Int32Type, Int64Type, Int8Type, UInt16Type, UInt32Type,
+    UInt64Type, UInt8Type,
+};
 use arrow_array::{
-    BooleanArray, Float64Array, Int64Array, RecordBatch, StringArray, TimestampNanosecondArray,
+    ArrayRef, BinaryArray, BooleanArray, Date32Array, Decimal128Array, Decimal256Array,
+    DictionaryArray, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array,
+    LargeBinaryArray, LargeStringArray, RecordBatch, StringArray, TimestampMicrosecondArray,
+    TimestampMillisecondArray, TimestampNanosecondArray, TimestampSecondArray, UInt16Array,
+    UInt32Array, UInt64Array, UInt8Array,
 };
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
-use influxdb3_client::query::{extract_value, QueryResult, Value};
+use influxdb3_client::{query::Value, Error, QueryResult};
 
 fn make_batch() -> RecordBatch {
     let schema = Arc::new(Schema::new(vec![
@@ -35,10 +43,44 @@ fn make_batch() -> RecordBatch {
     .unwrap()
 }
 
+fn extract_values(array: ArrayRef) -> Result<Vec<Value>, Error> {
+    let schema = Arc::new(Schema::new(vec![Field::new(
+        "value",
+        array.data_type().clone(),
+        true,
+    )]));
+    let batch = RecordBatch::try_new(Arc::clone(&schema), vec![array]).unwrap();
+    QueryResult::new(schema, vec![batch]).rows().map(|rows| {
+        rows.into_iter()
+            .map(|row| row.at(0).unwrap().clone())
+            .collect()
+    })
+}
+
+fn extract_first_value(array: ArrayRef) -> Result<Value, Error> {
+    Ok(extract_values(array)?.remove(0))
+}
+
+fn assert_dictionary_values<K>(name: &str)
+where
+    K: ArrowDictionaryKeyType,
+{
+    let dict: DictionaryArray<K> = vec!["alpha", "beta", "alpha"].into_iter().collect();
+    assert_eq!(
+        extract_values(Arc::new(dict)).unwrap(),
+        vec![
+            Value::String("alpha".into()),
+            Value::String("beta".into()),
+            Value::String("alpha".into())
+        ],
+        "{name}"
+    );
+}
+
 #[test]
 fn iteration() {
     // Covers: IntoIterator, multi-batch traversal, Row indexing by name,
-    // empty result, and Row::into_map roundtrip.
+    // empty result, Row::into_map roundtrip, and iterator error propagation.
     let batch = make_batch();
     let schema = batch.schema();
     let rows: Vec<_> = QueryResult::new(schema.clone(), vec![batch.clone(), batch.clone()])
@@ -61,34 +103,130 @@ fn iteration() {
     // Empty result
     let empty = QueryResult::new(schema, vec![]);
     assert_eq!(empty.into_iter().count(), 0);
+
+    // Unsupported column type is yielded as the next iterator item error.
+    let unsupported_schema = Arc::new(Schema::new(vec![Field::new(
+        "value",
+        DataType::Date32,
+        true,
+    )]));
+    let unsupported_batch = RecordBatch::try_new(
+        Arc::clone(&unsupported_schema),
+        vec![Arc::new(Date32Array::from(vec![1_i32]))],
+    )
+    .unwrap();
+    let mut iter = QueryResult::new(unsupported_schema, vec![unsupported_batch]).into_iter();
+    assert!(matches!(
+        iter.next(),
+        Some(Err(Error::UnsupportedArrowType { .. }))
+    ));
 }
 
 #[test]
 fn value_api() {
     // Type extraction across Arrow array types.
-    assert_eq!(
-        extract_value(&Int64Array::from(vec![None as Option<i64>]), 0),
-        Value::Null
-    );
-    assert_eq!(
-        extract_value(&Float64Array::from(vec![2.5]), 0),
-        Value::F64(2.5)
-    );
-    assert_eq!(
-        extract_value(&StringArray::from(vec!["x"]), 0),
-        Value::String("x".into())
-    );
-    assert_eq!(
-        extract_value(&BooleanArray::from(vec![true]), 0),
-        Value::Bool(true)
-    );
-    assert_eq!(
-        extract_value(
-            &TimestampNanosecondArray::from(vec![1_700_000_000_000_000_000_i64]),
-            0
+    let cases: Vec<(&str, ArrayRef, Value)> = vec![
+        (
+            "null",
+            Arc::new(Int64Array::from(vec![None as Option<i64>])),
+            Value::Null,
         ),
-        Value::Timestamp(1_700_000_000_000_000_000),
-    );
+        (
+            "bool",
+            Arc::new(BooleanArray::from(vec![true])),
+            Value::Bool(true),
+        ),
+        ("int8", Arc::new(Int8Array::from(vec![1_i8])), Value::I8(1)),
+        (
+            "int16",
+            Arc::new(Int16Array::from(vec![2_i16])),
+            Value::I16(2),
+        ),
+        (
+            "int32",
+            Arc::new(Int32Array::from(vec![3_i32])),
+            Value::I32(3),
+        ),
+        (
+            "int64",
+            Arc::new(Int64Array::from(vec![4_i64])),
+            Value::I64(4),
+        ),
+        (
+            "uint8",
+            Arc::new(UInt8Array::from(vec![5_u8])),
+            Value::U8(5),
+        ),
+        (
+            "uint16",
+            Arc::new(UInt16Array::from(vec![6_u16])),
+            Value::U16(6),
+        ),
+        (
+            "uint32",
+            Arc::new(UInt32Array::from(vec![7_u32])),
+            Value::U32(7),
+        ),
+        (
+            "uint64",
+            Arc::new(UInt64Array::from(vec![8_u64])),
+            Value::U64(8),
+        ),
+        (
+            "float32",
+            Arc::new(Float32Array::from(vec![1.5_f32])),
+            Value::F32(1.5),
+        ),
+        (
+            "float64",
+            Arc::new(Float64Array::from(vec![2.5_f64])),
+            Value::F64(2.5),
+        ),
+        (
+            "utf8",
+            Arc::new(StringArray::from(vec!["x"])),
+            Value::String("x".into()),
+        ),
+        (
+            "large_utf8",
+            Arc::new(LargeStringArray::from(vec!["large"])),
+            Value::String("large".into()),
+        ),
+        (
+            "binary",
+            Arc::new(BinaryArray::from_vec(vec![b"payload".as_slice()])),
+            Value::Binary(b"payload".to_vec()),
+        ),
+        (
+            "large_binary",
+            Arc::new(LargeBinaryArray::from_vec(vec![b"payload".as_slice()])),
+            Value::Binary(b"payload".to_vec()),
+        ),
+        (
+            "timestamp_s",
+            Arc::new(TimestampSecondArray::from(vec![1_i64])),
+            Value::Timestamp(1_000_000_000),
+        ),
+        (
+            "timestamp_ms",
+            Arc::new(TimestampMillisecondArray::from(vec![1_i64])),
+            Value::Timestamp(1_000_000),
+        ),
+        (
+            "timestamp_us",
+            Arc::new(TimestampMicrosecondArray::from(vec![1_i64])),
+            Value::Timestamp(1_000),
+        ),
+        (
+            "timestamp_ns",
+            Arc::new(TimestampNanosecondArray::from(vec![1_i64])),
+            Value::Timestamp(1),
+        ),
+    ];
+
+    for (name, array, expected) in cases {
+        assert_eq!(extract_first_value(array).unwrap(), expected, "{name}");
+    }
 
     // Coercion helpers
     assert_eq!(Value::I64(42).as_f64(), Some(42.0));
@@ -104,10 +242,31 @@ fn value_api() {
 
     // InfluxDB 3 returns tag columns as Dictionary(Int32, Utf8); the row value
     // must be the underlying string, not a debug dump of the column.
-    use arrow_array::DictionaryArray;
-    let dict: DictionaryArray<arrow_array::types::Int32Type> =
-        vec!["us-east", "us-west", "us-east"].into_iter().collect();
-    assert_eq!(extract_value(&dict, 0), Value::String("us-east".into()));
-    assert_eq!(extract_value(&dict, 1), Value::String("us-west".into()));
-    assert_eq!(extract_value(&dict, 2), Value::String("us-east".into()));
+    assert_dictionary_values::<Int8Type>("dictionary_int8");
+    assert_dictionary_values::<Int16Type>("dictionary_int16");
+    assert_dictionary_values::<Int32Type>("dictionary_int32");
+    assert_dictionary_values::<Int64Type>("dictionary_int64");
+    assert_dictionary_values::<UInt8Type>("dictionary_uint8");
+    assert_dictionary_values::<UInt16Type>("dictionary_uint16");
+    assert_dictionary_values::<UInt32Type>("dictionary_uint32");
+    assert_dictionary_values::<UInt64Type>("dictionary_uint64");
+
+    let decimal128 = Decimal128Array::from(vec![12345])
+        .with_precision_and_scale(10, 2)
+        .unwrap();
+    assert_eq!(
+        extract_first_value(Arc::new(decimal128)).unwrap(),
+        Value::String("123.45".into())
+    );
+
+    let decimal256 = Decimal256Array::from(vec![Some(12345_i32.into())])
+        .with_precision_and_scale(10, 2)
+        .unwrap();
+    assert_eq!(
+        extract_first_value(Arc::new(decimal256)).unwrap(),
+        Value::String("123.45".into())
+    );
+
+    let err = extract_first_value(Arc::new(Date32Array::from(vec![1_i32]))).unwrap_err();
+    assert!(matches!(err, Error::UnsupportedArrowType { .. }));
 }
