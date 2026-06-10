@@ -16,7 +16,7 @@
 
 ### Dependencies
 
-1. [#18](https://github.com/InfluxCommunity/influxdb3-rust/pull/18): Upgrade Arrow dependencies to version 58 and require Rust 1.88 or later.
+1. [#18](https://github.com/InfluxCommunity/influxdb3-rust/pull/18): Upgrade Arrow dependencies to version 58 and require Rust 1.89 or later.
 
 ## 0.1.0 [2026-06-08]
 
