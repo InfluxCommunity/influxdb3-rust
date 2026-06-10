@@ -122,7 +122,7 @@ impl FlightQueryClient {
         let response = client.do_get(request).await?;
         let raw = response.into_inner();
         let batch_stream = FlightRecordBatchStream::new_from_flight_data(
-            raw.map_err(arrow_flight::error::FlightError::Tonic),
+            raw.map_err(|status| arrow_flight::error::FlightError::Tonic(Box::new(status))),
         )
         .map_err(|e| Error::Arrow(arrow::error::ArrowError::ExternalError(Box::new(e))));
 
