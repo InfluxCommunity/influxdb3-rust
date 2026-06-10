@@ -68,8 +68,9 @@ jobs:
       - run:
           name: Configure Cargo for CI
           command: |
-            mkdir -p .cargo
-            cat > .cargo/config.toml \<<'EOF'
+            cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+            mkdir -p "$cargo_home"
+            cat > "$cargo_home/config.toml" \<<'EOF'
             [build]
             incremental = false
 
