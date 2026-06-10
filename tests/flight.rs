@@ -90,8 +90,13 @@ impl FlightService for CapturingFlightService {
         request: Request<Ticket>,
     ) -> std::result::Result<Response<Self::DoGetStream>, Status> {
         self.do_get_calls.fetch_add(1, Ordering::SeqCst);
-        if self.failures_remaining.load(Ordering::SeqCst) > 0 {
-            self.failures_remaining.fetch_sub(1, Ordering::SeqCst);
+        if self
+            .failures_remaining
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                (remaining > 0).then_some(remaining - 1)
+            })
+            .is_ok()
+        {
             return Err(Status::unavailable("transient query failure"));
         }
         *self.metadata.lock().unwrap() = Some(request.metadata().clone());
@@ -273,7 +278,7 @@ async fn query_stream_works_over_tls() -> Result<(), Box<dyn std::error::Error +
             .host(format!("https://localhost:{port}"))
             .token("TEST_TOKEN")
             .database("db")
-            .ssl_roots_path(ca_path.to_str().unwrap())
+            .ssl_roots_path(ca_path.to_string_lossy().into_owned())
             .query_timeout(Duration::from_secs(5))
             .build()?,
     )
