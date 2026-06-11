@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{point::Point, precision::Precision};
+use crate::{error::Error, point::Point, precision::Precision};
 
 /// Options controlling a single write operation.
 ///
@@ -32,7 +32,7 @@ pub struct WriteOptions {
     /// When `true`, a batch is accepted even if some lines are invalid.
     pub accept_partial: bool,
 
-    /// When `true`, use the v2 (`/api/v2/write`) endpoint instead of v3.
+    /// When `true`, use the V2 (`/api/v2/write`) endpoint instead of V3.
     pub use_v2_api: bool,
 
     /// Optional tag ordering for deterministic line-protocol output.
@@ -66,11 +66,22 @@ impl Default for WriteOptions {
             gzip_threshold: Some(1024),
             no_sync: false,
             accept_partial: true,
-            use_v2_api: false,
+            use_v2_api: true,
             tag_order: Vec::new(),
             batch_size: DEFAULT_BATCH_SIZE,
             max_inflight: DEFAULT_MAX_INFLIGHT,
         }
+    }
+}
+
+impl WriteOptions {
+    pub(crate) fn validate(&self) -> Result<(), Error> {
+        if self.use_v2_api && self.no_sync {
+            return Err(Error::Config(
+                "invalid write options: no_sync requires use_v2_api=false".into(),
+            ));
+        }
+        Ok(())
     }
 }
 
