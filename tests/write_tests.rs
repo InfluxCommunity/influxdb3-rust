@@ -18,7 +18,7 @@ async fn make_client(server: &Server) -> Client {
 
 #[tokio::test]
 async fn lp_string_with_overrides() {
-    // Covers: v3 endpoint, db param, auth header, content-type,
+    // Covers: V3 endpoint, db param, auth header, content-type,
     // precision + no_sync overrides reaching the URL.
     let mut server = Server::new_async().await;
     let _m = server

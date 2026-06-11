@@ -32,7 +32,7 @@ pub struct WriteOptions {
     /// When `true`, a batch is accepted even if some lines are invalid.
     pub accept_partial: bool,
 
-    /// When `true`, use the v2 (`/api/v2/write`) endpoint instead of v3.
+    /// When `true`, use the V2 (`/api/v2/write`) endpoint instead of V3.
     pub use_v2_api: bool,
 
     /// Optional tag ordering for deterministic line-protocol output.

@@ -21,7 +21,7 @@ fn construction_and_connection_string() {
         .unwrap_err();
     assert!(err.to_string().contains("invalid"), "got: {err}");
 
-    // Writes use the v2 compatibility endpoint by default.
+    // Writes use the V2 compatibility endpoint by default.
     let cfg = ClientConfig::builder()
         .host("http://localhost")
         .database("db")

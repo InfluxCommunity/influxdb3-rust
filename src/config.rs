@@ -24,7 +24,7 @@ pub struct ClientConfig {
     /// Database for all operations. Required; validated at construction time.
     pub database: String,
 
-    /// Organization name (used for v2 API compatibility).
+    /// Organization name (used for V2 API compatibility).
     pub org: Option<String>,
 
     /// Default write options applied to every write call.
@@ -96,7 +96,7 @@ impl ClientConfig {
     /// - `INFLUX_GZIP_THRESHOLD` - gzip threshold in bytes.
     /// - `INFLUX_WRITE_NO_SYNC` - skip WAL synchronization for writes.
     /// - `INFLUX_WRITE_ACCEPT_PARTIAL` - accept partial writes.
-    /// - `INFLUX_WRITE_USE_V2_API` - use the v2 write endpoint.
+    /// - `INFLUX_WRITE_USE_V2_API` - use the V2 write endpoint.
     pub fn from_env() -> Result<Self, Error> {
         let host = std::env::var("INFLUX_HOST").map_err(|_| Error::EnvVar("INFLUX_HOST".into()))?;
         let database = std::env::var("INFLUX_DATABASE")
@@ -149,7 +149,7 @@ impl ClientConfig {
     /// - `gzipThreshold` - gzip threshold in bytes.
     /// - `writeNoSync` - skip WAL synchronization for writes.
     /// - `writeAcceptPartial` - accept partial writes.
-    /// - `writeUseV2Api` - use the v2 write endpoint.
+    /// - `writeUseV2Api` - use the V2 write endpoint.
     pub fn from_connection_string(cs: &str) -> Result<Self, Error> {
         let url = Url::parse(cs)?;
         let mut host_url = url.clone();
@@ -294,19 +294,19 @@ impl ClientConfigBuilder {
         self
     }
 
-    /// Set whether writes use the v2 `/api/v2/write` endpoint by default.
+    /// Set whether writes use the V2 `/api/v2/write` endpoint by default.
     pub fn write_use_v2_api(mut self, use_v2_api: bool) -> Self {
         self.cfg.write_options.use_v2_api = use_v2_api;
         self
     }
 
-    /// Set whether v3 writes can partially succeed when some lines fail.
+    /// Set whether V3 writes can partially succeed when some lines fail.
     pub fn write_accept_partial(mut self, accept_partial: bool) -> Self {
         self.cfg.write_options.accept_partial = accept_partial;
         self
     }
 
-    /// Set whether v3 writes skip WAL synchronization by default.
+    /// Set whether V3 writes skip WAL synchronization by default.
     pub fn write_no_sync(mut self, no_sync: bool) -> Self {
         self.cfg.write_options.no_sync = no_sync;
         self

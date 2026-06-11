@@ -97,12 +97,12 @@ Optional environment variables configure the same write defaults used by the
 builder:
 
 - `INFLUX_AUTH_SCHEME`: authentication scheme, such as `Bearer` or `Token`.
-- `INFLUX_ORG`: organization name for v2 write compatibility.
+- `INFLUX_ORG`: organization name for V2 write compatibility.
 - `INFLUX_PRECISION`: write precision (`ns`, `us`, `ms`, or `s`).
 - `INFLUX_GZIP_THRESHOLD`: gzip write bodies larger than this many bytes.
-- `INFLUX_WRITE_NO_SYNC`: skip WAL synchronization on v3 writes.
-- `INFLUX_WRITE_ACCEPT_PARTIAL`: allow partial success on v3 writes.
-- `INFLUX_WRITE_USE_V2_API`: use the v2 write endpoint.
+- `INFLUX_WRITE_NO_SYNC`: skip WAL synchronization on V3 writes.
+- `INFLUX_WRITE_ACCEPT_PARTIAL`: allow partial success on V3 writes.
+- `INFLUX_WRITE_USE_V2_API`: use the V2 write endpoint.
 
 Or parse a connection string:
 
@@ -173,7 +173,7 @@ deterministic lexicographic order. For background, see
 ### High-throughput ingest
 
 For sustained, high-volume writes the throughput levers are `batch_size` (points
-per request) and `max_inflight` (concurrent requests per call). On the v3
+per request) and `max_inflight` (concurrent requests per call). On the V3
 endpoint, `no_sync()` can acknowledge writes before the WAL is synced, trading
 durability for speed.
 
@@ -199,7 +199,7 @@ for chunk in chunks {                    // each chunk is a Vec<Point>
             .write(chunk)
             .batch_size(10_000)
             .max_inflight(8)
-            .no_sync() // v3 endpoint only
+            .no_sync() // V3 endpoint only
             .await
     });
 }
@@ -302,7 +302,7 @@ Set a default policy for all requests with `ClientConfig::builder().retry(...)`.
 
 ### Partial writes
 
-Partial writes apply when writes use the v3 `/api/v3/write_lp` endpoint
+Partial writes apply when writes use the V3 `/api/v3/write_lp` endpoint
 (`use_v2_api=false`). When a batch contains invalid lines, the server accepts
 the valid ones and reports the rest. This surfaces as `Error::PartialWrite`,
 which lists the rejected lines:
@@ -332,13 +332,13 @@ any line fails.
 
 ### Write API compatibility
 
-Writes use the v2 `/api/v2/write` endpoint by default for compatibility with
+Writes use the V2 `/api/v2/write` endpoint by default for compatibility with
 InfluxDB Clustered and InfluxDB Cloud Dedicated/Serverless.
 
 Set `use_v2_api` to `false`, set `INFLUX_WRITE_USE_V2_API=false`, or use
-`writeUseV2Api=false` in a connection string to send writes through the v3
-endpoint. The v3 endpoint supports `accept_partial` and `no_sync`; those options
-are not sent when the v2 endpoint is used.
+`writeUseV2Api=false` in a connection string to send writes through the V3
+endpoint. The V3 endpoint supports `accept_partial` and `no_sync`; those options
+are not sent when the V2 endpoint is used.
 
 ## Polars integration
 
