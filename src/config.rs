@@ -294,6 +294,24 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Set whether writes use the v2 `/api/v2/write` endpoint by default.
+    pub fn write_use_v2_api(mut self, use_v2_api: bool) -> Self {
+        self.cfg.write_options.use_v2_api = use_v2_api;
+        self
+    }
+
+    /// Set whether v3 writes can partially succeed when some lines fail.
+    pub fn write_accept_partial(mut self, accept_partial: bool) -> Self {
+        self.cfg.write_options.accept_partial = accept_partial;
+        self
+    }
+
+    /// Set whether v3 writes skip WAL synchronization by default.
+    pub fn write_no_sync(mut self, no_sync: bool) -> Self {
+        self.cfg.write_options.no_sync = no_sync;
+        self
+    }
+
     /// Set the default retry policy for transient write/query failures.
     pub fn retry(mut self, retry: RetryConfig) -> Self {
         self.cfg.retry = retry;

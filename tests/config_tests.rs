@@ -21,6 +21,19 @@ fn construction_and_connection_string() {
         .unwrap_err();
     assert!(err.to_string().contains("invalid"), "got: {err}");
 
+    // Builder exposes common write defaults without constructing WriteOptions.
+    let cfg = ClientConfig::builder()
+        .host("http://localhost")
+        .database("db")
+        .write_no_sync(true)
+        .write_accept_partial(false)
+        .write_use_v2_api(true)
+        .build()
+        .unwrap();
+    assert!(cfg.write_options.no_sync);
+    assert!(!cfg.write_options.accept_partial);
+    assert!(cfg.write_options.use_v2_api);
+
     // Connection string, full form.
     let cfg = ClientConfig::from_connection_string(
         "https://cluster.example.io/?token=TOK&database=DB&org=ORG",
