@@ -100,7 +100,8 @@ builder:
 - `INFLUX_ORG`: organization name for V2 write compatibility.
 - `INFLUX_PRECISION`: write precision (`ns`, `us`, `ms`, or `s`).
 - `INFLUX_GZIP_THRESHOLD`: gzip write bodies larger than this many bytes.
-- `INFLUX_WRITE_NO_SYNC`: skip WAL synchronization on V3 writes.
+- `INFLUX_WRITE_NO_SYNC`: skip WAL synchronization on V3 writes; requires
+  `INFLUX_WRITE_USE_V2_API=false`.
 - `INFLUX_WRITE_ACCEPT_PARTIAL`: allow partial success on V3 writes.
 - `INFLUX_WRITE_USE_V2_API`: use the V2 write endpoint.
 
@@ -173,9 +174,10 @@ deterministic lexicographic order. For background, see
 ### High-throughput ingest
 
 For sustained, high-volume writes the throughput levers are `batch_size` (points
-per request) and `max_inflight` (concurrent requests per call). On the V3
-endpoint, `no_sync()` can acknowledge writes before the WAL is synced, trading
-durability for speed.
+per request) and `max_inflight` (concurrent requests per call). Writes use the
+V2 endpoint by default. Set `use_v2_api=false` to use the V3 endpoint, where
+`no_sync()` can acknowledge writes before the WAL is synced, trading durability
+for speed.
 
 A single `write` call serialises its batches on one task. To use more CPU cores
 and connections, run several `write` calls concurrently. `Client` is cheap to
@@ -319,6 +321,9 @@ let client = Client::new(
         .build()?,
 )
 .await?;
+
+let line_protocol =
+    "home,room=Sunroom temp=96 1735545600\nhome,room=Sunroom temp=\"hi\" 1735549200";
 
 if let Err(Error::PartialWrite(e)) = client.write(line_protocol).await {
     for line_error in &e.line_errors {
