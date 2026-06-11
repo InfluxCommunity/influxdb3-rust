@@ -10,6 +10,7 @@ async fn make_client(server: &Server) -> Client {
             .host(server.url())
             .database("testdb")
             .token("test-token")
+            .write_use_v2_api(false)
             .build()
             .unwrap(),
     )

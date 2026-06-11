@@ -8,6 +8,7 @@ async fn make_client(server: &Server) -> Client {
             .host(server.url())
             .database("testdb")
             .token("test-token")
+            .write_use_v2_api(false)
             .build()
             .unwrap(),
     )
@@ -58,9 +59,40 @@ async fn v2_write_uses_bucket_query_parameter() {
         .create_async()
         .await;
 
-    let client = make_client(&server).await;
-    client.write("cpu usage=1.0").use_v2_api().await.unwrap();
+    let client = Client::new(
+        ClientConfig::builder()
+            .host(server.url())
+            .database("testdb")
+            .token("test-token")
+            .build()
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    client.write("cpu usage=1.0").await.unwrap();
     m.assert_async().await;
+}
+
+#[tokio::test]
+async fn no_sync_requires_v3_endpoint() {
+    let server = Server::new_async().await;
+    let client = Client::new(
+        ClientConfig::builder()
+            .host(server.url())
+            .database("testdb")
+            .token("test-token")
+            .build()
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    let err = client.write("cpu usage=1.0").no_sync().await.unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("no_sync requires use_v2_api=false"),
+        "got: {err}"
+    );
 }
 
 #[tokio::test]

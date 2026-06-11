@@ -369,6 +369,7 @@ impl ClientConfigBuilder {
         if self.cfg.database.is_empty() {
             return Err(Error::Config("database is required".into()));
         }
+        self.cfg.write_options.validate()?;
 
         for (key, value) in self.pending_headers {
             let name = HeaderName::from_bytes(key.as_bytes())

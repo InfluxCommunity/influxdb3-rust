@@ -53,7 +53,7 @@ Or add it to `Cargo.toml`:
 
 ```toml
 [dependencies]
-influxdb3-client = "0.1"
+influxdb3-client = "0.2"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -61,7 +61,7 @@ The optional `polars` feature adds DataFrame writes and query-to-DataFrame
 conversion:
 
 ```toml
-influxdb3-client = { version = "0.1", features = ["polars"] }
+influxdb3-client = { version = "0.2", features = ["polars"] }
 ```
 
 ## Configuring a client
@@ -93,6 +93,17 @@ environment:
 let client = influxdb3_client::Client::from_env().await?;
 ```
 
+Optional environment variables configure the same write defaults used by the
+builder:
+
+- `INFLUX_AUTH_SCHEME`: authentication scheme, such as `Bearer` or `Token`.
+- `INFLUX_ORG`: organization name for v2 write compatibility.
+- `INFLUX_PRECISION`: write precision (`ns`, `us`, `ms`, or `s`).
+- `INFLUX_GZIP_THRESHOLD`: gzip write bodies larger than this many bytes.
+- `INFLUX_WRITE_NO_SYNC`: skip WAL synchronization on v3 writes.
+- `INFLUX_WRITE_ACCEPT_PARTIAL`: allow partial success on v3 writes.
+- `INFLUX_WRITE_USE_V2_API`: use the v2 write endpoint.
+
 Or parse a connection string:
 
 ```rust
@@ -100,6 +111,10 @@ let client = influxdb3_client::Client::from_connection_string(
     "https://cluster.example.io/?token=TOKEN&database=mydb",
 ).await?;
 ```
+
+Connection strings support the matching query parameters: `token`, `database`,
+`org`, `authScheme`, `precision`, `gzipThreshold`, `writeNoSync`,
+`writeAcceptPartial`, and `writeUseV2Api`.
 
 The Arrow Flight channel used for queries is opened lazily on the first query,
 so constructing a client never blocks on query connectivity.
@@ -142,18 +157,25 @@ client.write(points)
     .batch_size(10_000)          // points per HTTP request
     .max_inflight(8)             // concurrent in-flight requests
     .default_tag("region", "us-east")
-    .no_sync()                   // acknowledge before WAL sync
+    .tag_order(["region", "host"])
     .await?;
 ```
 
 Large inputs are split into batches and sent as multiple pipelined requests; one
 batch buffer is held in memory at a time.
 
+The first write defines physical tag column order, which can affect query
+performance. Use `.tag_order(...)` to serialize frequently filtered tags first.
+Listed tags are emitted first when present; remaining tags are appended in
+deterministic lexicographic order. For background, see
+[Sort tags by query priority](https://docs.influxdata.com/influxdb3/core/write-data/best-practices/optimize-writes/#sort-tags-by-query-priority).
+
 ### High-throughput ingest
 
 For sustained, high-volume writes the throughput levers are `batch_size` (points
-per request), `max_inflight` (concurrent requests per call), and `no_sync()`
-(acknowledge before the WAL is synced, trading durability for speed).
+per request) and `max_inflight` (concurrent requests per call). On the v3
+endpoint, `no_sync()` can acknowledge writes before the WAL is synced, trading
+durability for speed.
 
 A single `write` call serialises its batches on one task. To use more CPU cores
 and connections, run several `write` calls concurrently. `Client` is cheap to
@@ -177,7 +199,7 @@ for chunk in chunks {                    // each chunk is a Vec<Point>
             .write(chunk)
             .batch_size(10_000)
             .max_inflight(8)
-            .no_sync()
+            .no_sync() // v3 endpoint only
             .await
     });
 }
@@ -280,12 +302,23 @@ Set a default policy for all requests with `ClientConfig::builder().retry(...)`.
 
 ### Partial writes
 
-When a batch contains invalid lines, the server accepts the valid ones and
-reports the rest. This surfaces as `Error::PartialWrite`, which lists the
-rejected lines:
+Partial writes apply when writes use the v3 `/api/v3/write_lp` endpoint
+(`use_v2_api=false`). When a batch contains invalid lines, the server accepts
+the valid ones and reports the rest. This surfaces as `Error::PartialWrite`,
+which lists the rejected lines:
 
 ```rust
-use influxdb3_client::Error;
+use influxdb3_client::{Client, ClientConfig, Error};
+
+let client = Client::new(
+    ClientConfig::builder()
+        .host("http://localhost:8181")
+        .token("token")
+        .database("db")
+        .write_use_v2_api(false)
+        .build()?,
+)
+.await?;
 
 if let Err(Error::PartialWrite(e)) = client.write(line_protocol).await {
     for line_error in &e.line_errors {
@@ -293,6 +326,19 @@ if let Err(Error::PartialWrite(e)) = client.write(line_protocol).await {
     }
 }
 ```
+
+Set `accept_partial` to `false` in `WriteOptions` to reject the full batch when
+any line fails.
+
+### Write API compatibility
+
+Writes use the v2 `/api/v2/write` endpoint by default for compatibility with
+InfluxDB Clustered and InfluxDB Cloud Dedicated/Serverless.
+
+Set `use_v2_api` to `false`, set `INFLUX_WRITE_USE_V2_API=false`, or use
+`writeUseV2Api=false` in a connection string to send writes through the v3
+endpoint. The v3 endpoint supports `accept_partial` and `no_sync`; those options
+are not sent when the v2 endpoint is used.
 
 ## Polars integration
 
@@ -365,6 +411,11 @@ Runnable examples are in [`examples/`](examples/):
 INFLUX_HOST=http://localhost:8181 INFLUX_TOKEN=token INFLUX_DATABASE=mydb \
     cargo run --example quickstart
 ```
+
+## Feedback
+
+For bugs and feature requests, open an issue in
+[InfluxCommunity/influxdb3-rust](https://github.com/InfluxCommunity/influxdb3-rust/issues).
 
 ## Contributing
 

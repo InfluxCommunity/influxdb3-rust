@@ -21,18 +21,38 @@ fn construction_and_connection_string() {
         .unwrap_err();
     assert!(err.to_string().contains("invalid"), "got: {err}");
 
+    // Writes use the v2 compatibility endpoint by default.
+    let cfg = ClientConfig::builder()
+        .host("http://localhost")
+        .database("db")
+        .build()
+        .unwrap();
+    assert!(cfg.write_options.use_v2_api);
+
     // Builder exposes common write defaults without constructing WriteOptions.
     let cfg = ClientConfig::builder()
         .host("http://localhost")
         .database("db")
         .write_no_sync(true)
         .write_accept_partial(false)
-        .write_use_v2_api(true)
+        .write_use_v2_api(false)
         .build()
         .unwrap();
     assert!(cfg.write_options.no_sync);
     assert!(!cfg.write_options.accept_partial);
-    assert!(cfg.write_options.use_v2_api);
+    assert!(!cfg.write_options.use_v2_api);
+
+    let err = ClientConfig::builder()
+        .host("http://localhost")
+        .database("db")
+        .write_no_sync(true)
+        .build()
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("no_sync requires use_v2_api=false"),
+        "got: {err}"
+    );
 
     // Connection string, full form.
     let cfg = ClientConfig::from_connection_string(
@@ -71,7 +91,7 @@ fn construction_and_connection_string() {
     let cfg = ClientConfig::from_connection_string(
         "https://cluster.example.io/?token=TOK&database=DB&authScheme=Token\
          &precision=ms&gzipThreshold=64&writeNoSync=true\
-         &writeAcceptPartial=false&writeUseV2Api=true",
+         &writeAcceptPartial=false&writeUseV2Api=false",
     )
     .unwrap();
     assert_eq!(cfg.auth_scheme, "Token");
@@ -79,7 +99,7 @@ fn construction_and_connection_string() {
     assert_eq!(cfg.write_options.gzip_threshold, Some(64));
     assert!(cfg.write_options.no_sync);
     assert!(!cfg.write_options.accept_partial);
-    assert!(cfg.write_options.use_v2_api);
+    assert!(!cfg.write_options.use_v2_api);
 
     for precision in [
         "ns",
@@ -101,6 +121,7 @@ fn construction_and_connection_string() {
         "https://h/?token=T&database=db&writeNoSync=invalid",
         "https://h/?token=T&database=db&writeAcceptPartial=invalid",
         "https://h/?token=T&database=db&writeUseV2Api=invalid",
+        "https://h/?token=T&database=db&writeNoSync=true&writeUseV2Api=true",
     ] {
         let err = ClientConfig::from_connection_string(cs).unwrap_err();
         assert!(
@@ -142,7 +163,7 @@ fn from_env() {
     std::env::set_var("INFLUX_GZIP_THRESHOLD", "64");
     std::env::set_var("INFLUX_WRITE_NO_SYNC", "true");
     std::env::set_var("INFLUX_WRITE_ACCEPT_PARTIAL", "false");
-    std::env::set_var("INFLUX_WRITE_USE_V2_API", "true");
+    std::env::set_var("INFLUX_WRITE_USE_V2_API", "false");
     std::env::set_var("INFLUX_ORG", "env-org");
     let cfg = ClientConfig::from_env().unwrap();
     assert_eq!(cfg.host_url(), "https://env-host");
@@ -154,7 +175,16 @@ fn from_env() {
     assert_eq!(cfg.write_options.gzip_threshold, Some(64));
     assert!(cfg.write_options.no_sync);
     assert!(!cfg.write_options.accept_partial);
-    assert!(cfg.write_options.use_v2_api);
+    assert!(!cfg.write_options.use_v2_api);
+
+    std::env::set_var("INFLUX_WRITE_USE_V2_API", "true");
+    let err = ClientConfig::from_env().unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("no_sync requires use_v2_api=false"),
+        "got: {err}"
+    );
+    std::env::set_var("INFLUX_WRITE_USE_V2_API", "false");
 
     for (name, value) in [
         ("INFLUX_PRECISION", "invalid"),
