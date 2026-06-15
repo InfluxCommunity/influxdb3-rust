@@ -53,8 +53,9 @@ impl Client {
         Client::new(ClientConfig::from_connection_string(cs)?).await
     }
 
-    /// Read `INFLUX_HOST`, `INFLUX_TOKEN`, and `INFLUX_DATABASE` from the
-    /// environment and create a client.
+    /// Read configuration from environment variables and create a client.
+    ///
+    /// See [`ClientConfig::from_env`] for the supported variables.
     pub async fn from_env() -> Result<Self> {
         Client::new(ClientConfig::from_env()?).await
     }
@@ -290,6 +291,7 @@ impl<'a, W: WriteInput + Send + 'a> IntoFuture for WriteRequest<'a, W> {
         let options = self.options;
         let policy = self.retry.unwrap_or_else(|| client.config.retry.clone());
         Box::pin(async move {
+            options.validate()?;
             let max_inflight = options.max_inflight.max(1);
             let batches = data.into_lp_batches(&options);
 

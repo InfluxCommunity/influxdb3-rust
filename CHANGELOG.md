@@ -8,6 +8,9 @@
    Add auth scheme and write option support.
    Preserve explicit ports and strip userinfo from normalized hosts.
    Remove the legacy `bucket` and `INFLUX_BUCKET` aliases in favor of `database` and `INFLUX_DATABASE`.
+2. [#19](https://github.com/InfluxCommunity/influxdb3-rust/pull/19): Default writes to the V2 API endpoint. Add builder methods for write defaults.
+   `no_sync` requires `use_v2_api=false` to write to the V3 API endpoint.
+   `accept_partial` applies only when writes are sent to the V3 API endpoint and is ignored otherwise.
 
 ### Bug Fixes
 
