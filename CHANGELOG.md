@@ -17,6 +17,10 @@
 1. [#13](https://github.com/InfluxCommunity/influxdb3-rust/pull/13): Improve Arrow query result type support.
    Unsupported Arrow types now produce `Error::UnsupportedArrowType` instead of `Null`.
 
+### Dependencies
+
+1. [#18](https://github.com/InfluxCommunity/influxdb3-rust/pull/18): Upgrade Arrow dependencies to version 58 and require Rust 1.89 or later.
+
 ## 0.1.0 [2026-06-08]
 
 Initial release.

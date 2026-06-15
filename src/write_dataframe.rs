@@ -316,6 +316,7 @@ impl crate::write::WriteInput for DataFrameWrite<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::write::{WriteInput, WriteOptions};
     use polars::prelude::*;
 
     #[test]
@@ -369,5 +370,108 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn field_value_serializes_scalar_types() {
+        let cases = [
+            (AnyValue::Int8(-8), "-8i"),
+            (AnyValue::Int16(-16), "-16i"),
+            (AnyValue::Int32(-32), "-32i"),
+            (AnyValue::Int64(-64), "-64i"),
+            (AnyValue::Int128(-128), "-128i"),
+            (AnyValue::UInt8(8), "8u"),
+            (AnyValue::UInt16(16), "16u"),
+            (AnyValue::UInt32(32), "32u"),
+            (AnyValue::UInt64(64), "64u"),
+            (AnyValue::UInt128(128), "128u"),
+            (AnyValue::Float32(2.0), "2.0"),
+            (AnyValue::Float32(2.5), "2.5"),
+            (AnyValue::Float64(4.0), "4.0"),
+            (AnyValue::Float64(4.25), "4.25"),
+            (AnyValue::Float16(pf16::from(8.0_f32)), "8.0"),
+            (AnyValue::Float16(pf16::from(8.5_f32)), "8.5"),
+            (AnyValue::String(r#"say "hi""#), r#""say \"hi\"""#),
+            (AnyValue::StringOwned("owned".into()), r#""owned""#),
+            (AnyValue::Datetime(42, TimeUnit::Nanoseconds, None), "42i"),
+            (AnyValue::Date(7), "7i"),
+            (AnyValue::Duration(9, TimeUnit::Milliseconds), "9i"),
+            (AnyValue::Time(11), "11i"),
+        ];
+
+        for (value, expected) in cases {
+            assert_eq!(to_field_value(value).as_deref(), Some(expected));
+        }
+
+        let fallback = to_field_value(AnyValue::Binary(b"abc")).unwrap();
+        assert!(fallback.starts_with('"'), "got: {fallback}");
+        assert!(fallback.ends_with('"'), "got: {fallback}");
+    }
+
+    #[test]
+    fn timestamp_value_serializes_supported_types() {
+        let cases = [
+            (AnyValue::Null, Precision::Nanosecond, None),
+            (AnyValue::Int32(32), Precision::Nanosecond, Some(32)),
+            (AnyValue::Int64(64), Precision::Nanosecond, Some(64)),
+            (AnyValue::UInt32(32), Precision::Nanosecond, Some(32)),
+            (AnyValue::UInt64(64), Precision::Nanosecond, Some(64)),
+            (
+                AnyValue::Datetime(1_234_567_890, TimeUnit::Nanoseconds, None),
+                Precision::Millisecond,
+                Some(1_234),
+            ),
+            (
+                AnyValue::Datetime(1_234, TimeUnit::Microseconds, None),
+                Precision::Microsecond,
+                Some(1_234),
+            ),
+            (
+                AnyValue::Datetime(12, TimeUnit::Milliseconds, None),
+                Precision::Nanosecond,
+                Some(12_000_000),
+            ),
+            (
+                AnyValue::String("not a timestamp"),
+                Precision::Nanosecond,
+                None,
+            ),
+        ];
+
+        for (value, precision, expected) in cases {
+            assert_eq!(to_timestamp(value, precision), expected);
+        }
+    }
+
+    #[test]
+    fn dataframe_write_batches_with_tags_and_timestamp() {
+        let df = df![
+            "host" => ["a", "b", "c"],
+            "v" => [Some(1_i64), None, Some(3_i64)],
+            "ts" => [10_i64, 20_i64, 30_i64],
+        ]
+        .unwrap();
+
+        for batch_size in [0, 2] {
+            let opts = WriteOptions {
+                batch_size,
+                ..WriteOptions::default()
+            };
+            let batches = DataFrameWrite::new(&df, "m")
+                .tags(&["host"])
+                .timestamp_column("ts")
+                .into_lp_batches(&opts)
+                .map(|batch| String::from_utf8(batch.unwrap()).unwrap())
+                .collect::<Vec<_>>();
+
+            assert_eq!(
+                batches,
+                vec![
+                    "m,host=a v=1i 10".to_string(),
+                    "m,host=c v=3i 30".to_string(),
+                ],
+                "batch_size={batch_size}",
+            );
+        }
     }
 }
