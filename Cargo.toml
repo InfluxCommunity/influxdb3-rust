@@ -58,7 +58,7 @@ polars = { version = "0.53.0", default-features = false, features = ["dtype-date
 [dev-dependencies]
 tokio   = { version = "1", features = ["full", "test-util", "rt-multi-thread"] }
 mockito = "1"
-rcgen   = "0.13"
+rcgen   = "0.14"
 
 [[example]]
 name = "quickstart"
