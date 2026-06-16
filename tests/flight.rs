@@ -257,10 +257,10 @@ async fn query_stream_works_over_tls() -> Result<(), Box<dyn std::error::Error +
 
     // Self-signed cert for `localhost`; the SAN must match the host the client
     // connects to, otherwise tonic rejects the certificate.
-    let CertifiedKey { cert, key_pair } =
+    let CertifiedKey { cert, signing_key } =
         rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
     let cert_pem = cert.pem();
-    let key_pem = key_pair.serialize_pem();
+    let key_pem = signing_key.serialize_pem();
 
     // The client trusts the server cert via a CA roots file (same PEM).
     let ca_path = std::env::temp_dir().join(format!("influxdb3-tls-test-{port}.pem"));
