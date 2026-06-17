@@ -41,4 +41,4 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Lint Rust code
-        run: cargo clippy --all-targets --all-features
+        run: cargo clippy --all-targets --all-features -- -D warnings
