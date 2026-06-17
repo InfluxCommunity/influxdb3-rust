@@ -289,7 +289,6 @@ impl IntoIterator for QueryResult {
 /// Holds the column-name index in an `Arc` so each yielded [`Row`] can share
 /// the same name-to-position map, so there is no per-row HashMap allocation.
 pub struct QueryIterator {
-    schema: SchemaRef,
     batches: Vec<RecordBatch>,
     batch_idx: usize,
     row_idx: usize,
@@ -306,7 +305,6 @@ impl QueryIterator {
             .map(|(i, n)| (n.clone(), i))
             .collect();
         QueryIterator {
-            schema,
             batches,
             batch_idx: 0,
             row_idx: 0,
