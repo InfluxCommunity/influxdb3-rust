@@ -53,7 +53,7 @@ Or add it to `Cargo.toml`:
 
 ```toml
 [dependencies]
-influxdb3-client = "0.2"
+influxdb3-client = "0.3"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -61,7 +61,7 @@ The optional `polars` feature adds DataFrame writes and query-to-DataFrame
 conversion:
 
 ```toml
-influxdb3-client = { version = "0.2", features = ["polars"] }
+influxdb3-client = { version = "0.3", features = ["polars"] }
 ```
 
 ## Configuring a client
