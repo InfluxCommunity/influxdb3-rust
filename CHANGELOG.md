@@ -2,6 +2,13 @@
 
 ## 0.3.0 [unreleased]
 
+### Performance
+
+1. [#30](https://github.com/InfluxCommunity/influxdb3-rust/pull/30): Rewrite the polars DataFrame serializer with typed column iterators
+   and the shared ryu/itoa line-protocol writers; ~2.5x faster on wide numeric frames.
+   Floats on the DataFrame path now format via ryu, matching `Point`, so extreme
+   magnitudes emit exponent notation instead of expanded decimals.
+
 ## 0.2.0 [2026-06-16]
 
 ### Features
