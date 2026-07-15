@@ -4,11 +4,15 @@
 //! It converts every row of a DataFrame into an InfluxDB line-protocol line,
 //! using the same escaping and type-suffix rules as [`crate::point::Point`].
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 
-use polars::prelude::{AnyValue, DataFrame, TimeUnit};
+use polars::prelude::{AnyValue, Column, DataFrame, DataType, TimeUnit};
 
-use crate::point::{escape_measurement, escape_string_field, escape_tag};
+use crate::point::{
+    escape_measurement, escape_string_field, escape_tag, write_escaped_tag_value, write_lp_bool,
+    write_lp_f32, write_lp_f64, write_lp_int, write_lp_string_field, write_lp_uint,
+};
 use crate::{error::Error, precision::Precision};
 
 /// Convert an `AnyValue` to a **tag value** string (escaped, unquoted).
@@ -24,6 +28,9 @@ fn to_tag_value(val: AnyValue<'_>) -> Option<String> {
 
 /// Convert an `AnyValue` to a typed **field** string with the correct suffix.
 /// Returns `None` for null values, which are silently omitted.
+///
+/// This is the fallback for dtypes without a typed reader below; the common
+/// numeric/bool/string dtypes never pass through here.
 fn to_field_value(val: AnyValue<'_>) -> Option<String> {
     match val {
         AnyValue::Null => None,
@@ -39,27 +46,20 @@ fn to_field_value(val: AnyValue<'_>) -> Option<String> {
         AnyValue::UInt64(v) => Some(format!("{v}u")),
         AnyValue::UInt128(v) => Some(format!("{v}u")),
         AnyValue::Float32(v) => {
-            if v.fract() == 0.0 && v.is_finite() {
-                Some(format!("{v}.0"))
-            } else {
-                Some(format!("{v}"))
-            }
+            let mut buf = Vec::new();
+            write_lp_f32(&mut buf, v);
+            Some(String::from_utf8(buf).expect("line protocol is valid UTF-8"))
         }
         AnyValue::Float64(v) => {
-            if v.fract() == 0.0 && v.is_finite() {
-                Some(format!("{v}.0"))
-            } else {
-                Some(format!("{v}"))
-            }
+            let mut buf = Vec::new();
+            write_lp_f64(&mut buf, v);
+            Some(String::from_utf8(buf).expect("line protocol is valid UTF-8"))
         }
         // f16 via f32
         AnyValue::Float16(v) => {
-            let f = f32::from(v);
-            if f.fract() == 0.0 && f.is_finite() {
-                Some(format!("{f}.0"))
-            } else {
-                Some(format!("{f}"))
-            }
+            let mut buf = Vec::new();
+            write_lp_f32(&mut buf, f32::from(v));
+            Some(String::from_utf8(buf).expect("line protocol is valid UTF-8"))
         }
         AnyValue::String(s) => Some(format!("\"{}\"", escape_string_field(s))),
         AnyValue::StringOwned(s) => Some(format!("\"{}\"", escape_string_field(s.as_str()))),
@@ -74,33 +74,131 @@ fn to_field_value(val: AnyValue<'_>) -> Option<String> {
     }
 }
 
-/// Convert a timestamp `AnyValue` to the integer form used in line protocol.
+type OptIter<'a, T> = Box<dyn Iterator<Item = Option<T>> + 'a>;
+
+/// Typed per-column value reader, downcast from the column's dtype once so the
+/// row loop iterates chunked arrays directly instead of going through
+/// per-cell `AnyValue` dispatch.
+enum FieldReader<'a> {
+    Int(OptIter<'a, i64>),
+    UInt(OptIter<'a, u64>),
+    F32(OptIter<'a, f32>),
+    F64(OptIter<'a, f64>),
+    Bool(OptIter<'a, bool>),
+    Str(OptIter<'a, &'a str>),
+    /// Row-wise `AnyValue` access for dtypes without a typed reader.
+    Fallback(&'a Column),
+}
+
+fn field_reader(col: &Column) -> FieldReader<'_> {
+    let s = col.as_materialized_series();
+    match col.dtype() {
+        DataType::Int8 => FieldReader::Int(Box::new(
+            s.i8().unwrap().into_iter().map(|o| o.map(i64::from)),
+        )),
+        DataType::Int16 => FieldReader::Int(Box::new(
+            s.i16().unwrap().into_iter().map(|o| o.map(i64::from)),
+        )),
+        DataType::Int32 => FieldReader::Int(Box::new(
+            s.i32().unwrap().into_iter().map(|o| o.map(i64::from)),
+        )),
+        DataType::Int64 => FieldReader::Int(Box::new(s.i64().unwrap().into_iter())),
+        DataType::UInt8 => FieldReader::UInt(Box::new(
+            s.u8().unwrap().into_iter().map(|o| o.map(u64::from)),
+        )),
+        DataType::UInt16 => FieldReader::UInt(Box::new(
+            s.u16().unwrap().into_iter().map(|o| o.map(u64::from)),
+        )),
+        DataType::UInt32 => FieldReader::UInt(Box::new(
+            s.u32().unwrap().into_iter().map(|o| o.map(u64::from)),
+        )),
+        DataType::UInt64 => FieldReader::UInt(Box::new(s.u64().unwrap().into_iter())),
+        DataType::Float32 => FieldReader::F32(Box::new(s.f32().unwrap().into_iter())),
+        DataType::Float64 => FieldReader::F64(Box::new(s.f64().unwrap().into_iter())),
+        DataType::Boolean => FieldReader::Bool(Box::new(s.bool().unwrap().into_iter())),
+        DataType::String => FieldReader::Str(Box::new(s.str().unwrap().into_iter())),
+        // Temporal field columns are emitted as their physical integer with an
+        // `i` suffix, matching the `to_field_value` fallback.
+        DataType::Datetime(_, _) => {
+            FieldReader::Int(Box::new(s.datetime().unwrap().physical().into_iter()))
+        }
+        DataType::Date => FieldReader::Int(Box::new(
+            s.date()
+                .unwrap()
+                .physical()
+                .into_iter()
+                .map(|o| o.map(i64::from)),
+        )),
+        _ => FieldReader::Fallback(col),
+    }
+}
+
+enum TagReader<'a> {
+    Str(OptIter<'a, &'a str>),
+    /// Row-wise `AnyValue` access for non-string tag columns.
+    Fallback(&'a Column),
+}
+
+fn tag_reader(col: &Column) -> TagReader<'_> {
+    match col.dtype() {
+        DataType::String => TagReader::Str(Box::new(
+            col.as_materialized_series().str().unwrap().into_iter(),
+        )),
+        _ => TagReader::Fallback(col),
+    }
+}
+
+/// Build the timestamp reader, with unit conversion baked in at construction.
 ///
 /// * `Int32/Int64/UInt32/UInt64` columns are treated as **already** in the
-///   target `precision`, returned as-is.
+///   target `precision`, passed through as-is.
 /// * `Datetime` columns are converted from their stored `TimeUnit` to the
 ///   target precision automatically.
-/// * `Null` returns `None` (no timestamp; server assigns).
-fn to_timestamp(val: AnyValue<'_>, precision: Precision) -> Option<i64> {
-    match val {
-        AnyValue::Null => None,
-        // Integer columns: caller's precision defines the unit.
-        AnyValue::Int64(v) => Some(v),
-        AnyValue::Int32(v) => Some(v as i64),
-        AnyValue::UInt64(v) => Some(v as i64),
-        AnyValue::UInt32(v) => Some(v as i64),
-        // Polars Datetime: stored in the column's own TimeUnit, converted to ns
-        // then rescaled to the target precision.
-        AnyValue::Datetime(v, tu, _) | AnyValue::DatetimeOwned(v, tu, _) => {
-            let nanos = match tu {
-                TimeUnit::Nanoseconds => v,
-                TimeUnit::Microseconds => v * 1_000,
-                TimeUnit::Milliseconds => v * 1_000_000,
-            };
-            Some(precision.scale_timestamp(nanos))
+/// * Any other dtype yields no reader, so the timestamp is omitted for every
+///   row (server assigns the time; unchanged behaviour).
+fn timestamp_reader(col: &Column, precision: Precision) -> Option<OptIter<'_, i64>> {
+    let s = col.as_materialized_series();
+    match col.dtype() {
+        DataType::Int64 => Some(Box::new(s.i64().unwrap().into_iter())),
+        DataType::Int32 => Some(Box::new(
+            s.i32().unwrap().into_iter().map(|o| o.map(i64::from)),
+        )),
+        DataType::UInt64 => Some(Box::new(
+            s.u64().unwrap().into_iter().map(|o| o.map(|v| v as i64)),
+        )),
+        DataType::UInt32 => Some(Box::new(
+            s.u32().unwrap().into_iter().map(|o| o.map(i64::from)),
+        )),
+        DataType::Datetime(tu, _) => {
+            let tu = *tu;
+            Some(Box::new(s.datetime().unwrap().physical().into_iter().map(
+                move |o| {
+                    o.map(|v| {
+                        let nanos = match tu {
+                            TimeUnit::Nanoseconds => v,
+                            TimeUnit::Microseconds => v * 1_000,
+                            TimeUnit::Milliseconds => v * 1_000_000,
+                        };
+                        precision.scale_timestamp(nanos)
+                    })
+                },
+            )))
         }
         _ => None,
     }
+}
+
+fn write_field_prefix(buf: &mut Vec<u8>, first: &mut bool, escaped_name: &str) {
+    if !*first {
+        buf.push(b',');
+    }
+    *first = false;
+    buf.extend_from_slice(escaped_name.as_bytes());
+    buf.push(b'=');
+}
+
+fn row_access_err(e: polars::error::PolarsError) -> Error {
+    Error::Config(format!("polars row access error: {e}"))
 }
 
 /// Serialise a polars [`DataFrame`] to newline-separated InfluxDB line protocol.
@@ -138,78 +236,129 @@ pub fn dataframe_to_line_protocol(
     let meas_escaped = escape_measurement(measurement);
     let tag_set: HashSet<&str> = tags.iter().copied().collect();
 
-    // Pre-fetch all columns by index once (polars 0.53: Column is not Series).
-    let width = df.width();
-    let all_columns: Vec<&polars::frame::column::Column> =
-        (0..width).filter_map(|i| df.select_at_idx(i)).collect();
+    // Resolve columns and escape their names once, before the row loop.
+    // Missing tag columns are silently skipped (unchanged behaviour).
+    let mut tag_cols: Vec<(Cow<'_, str>, TagReader<'_>)> = tags
+        .iter()
+        .filter_map(|&t| df.column(t).ok().map(|c| (escape_tag(t), tag_reader(c))))
+        .collect();
 
-    let mut lines: Vec<String> = Vec::with_capacity(height);
+    // All columns that are not tag columns and not the timestamp column,
+    // in frame order.
+    let mut field_cols: Vec<(Cow<'_, str>, FieldReader<'_>)> = (0..df.width())
+        .filter_map(|i| df.select_at_idx(i))
+        .filter(|c| {
+            let name = c.name().as_str();
+            !tag_set.contains(name) && Some(name) != timestamp_column
+        })
+        .map(|c| (escape_tag(c.name().as_str()), field_reader(c)))
+        .collect();
+
+    let mut ts_reader = timestamp_column
+        .and_then(|t| df.column(t).ok())
+        .and_then(|c| timestamp_reader(c, precision));
+
+    let mut buf: Vec<u8> = Vec::with_capacity(height * 64);
 
     for row_idx in 0..height {
-        let mut line = String::with_capacity(128);
-
-        line.push_str(&meas_escaped);
+        let row_start = buf.len();
+        if row_start > 0 {
+            buf.push(b'\n');
+        }
+        buf.extend_from_slice(meas_escaped.as_bytes());
 
         // Tags are emitted in the order given by the caller.
-        for &tag in tags {
-            if let Ok(col) = df.column(tag) {
-                let val = col
-                    .get(row_idx)
-                    .map_err(|e| Error::Config(format!("polars row access error: {e}")))?;
-                if let Some(tv) = to_tag_value(val) {
-                    line.push(',');
-                    line.push_str(&escape_tag(tag));
-                    line.push('=');
-                    line.push_str(&tv);
+        for (name, reader) in tag_cols.iter_mut() {
+            match reader {
+                TagReader::Str(it) => {
+                    if let Some(v) = it.next().flatten() {
+                        buf.push(b',');
+                        buf.extend_from_slice(name.as_bytes());
+                        buf.push(b'=');
+                        write_escaped_tag_value(&mut buf, v);
+                    }
+                }
+                TagReader::Fallback(col) => {
+                    let val = col.get(row_idx).map_err(row_access_err)?;
+                    if let Some(tv) = to_tag_value(val) {
+                        buf.push(b',');
+                        buf.extend_from_slice(name.as_bytes());
+                        buf.push(b'=');
+                        buf.extend_from_slice(tv.as_bytes()); // already escaped
+                    }
                 }
             }
         }
 
-        line.push(' ');
-
-        // All columns that are not tag columns and not the timestamp column.
-        let field_start = line.len();
-        let mut first_field = true;
-        for col in &all_columns {
-            let name = col.name().as_str();
-            if tag_set.contains(name) || Some(name) == timestamp_column {
-                continue;
-            }
-            let val = col
-                .get(row_idx)
-                .map_err(|e| Error::Config(format!("polars row access error: {e}")))?;
-            if let Some(fv) = to_field_value(val) {
-                if !first_field {
-                    line.push(',');
+        buf.push(b' ');
+        let field_start = buf.len();
+        let mut first = true;
+        for (name, reader) in field_cols.iter_mut() {
+            match reader {
+                FieldReader::Int(it) => {
+                    if let Some(v) = it.next().flatten() {
+                        write_field_prefix(&mut buf, &mut first, name);
+                        write_lp_int(&mut buf, v);
+                    }
                 }
-                line.push_str(&escape_tag(name));
-                line.push('=');
-                line.push_str(&fv);
-                first_field = false;
+                FieldReader::UInt(it) => {
+                    if let Some(v) = it.next().flatten() {
+                        write_field_prefix(&mut buf, &mut first, name);
+                        write_lp_uint(&mut buf, v);
+                    }
+                }
+                FieldReader::F32(it) => {
+                    if let Some(v) = it.next().flatten() {
+                        write_field_prefix(&mut buf, &mut first, name);
+                        write_lp_f32(&mut buf, v);
+                    }
+                }
+                FieldReader::F64(it) => {
+                    if let Some(v) = it.next().flatten() {
+                        write_field_prefix(&mut buf, &mut first, name);
+                        write_lp_f64(&mut buf, v);
+                    }
+                }
+                FieldReader::Bool(it) => {
+                    if let Some(v) = it.next().flatten() {
+                        write_field_prefix(&mut buf, &mut first, name);
+                        write_lp_bool(&mut buf, v);
+                    }
+                }
+                FieldReader::Str(it) => {
+                    if let Some(v) = it.next().flatten() {
+                        write_field_prefix(&mut buf, &mut first, name);
+                        write_lp_string_field(&mut buf, v);
+                    }
+                }
+                FieldReader::Fallback(col) => {
+                    let val = col.get(row_idx).map_err(row_access_err)?;
+                    if let Some(fv) = to_field_value(val) {
+                        write_field_prefix(&mut buf, &mut first, name);
+                        buf.extend_from_slice(fv.as_bytes());
+                    }
+                }
             }
         }
 
-        if line.len() == field_start {
-            // All fields were null; skip this row entirely.
+        // Consume the timestamp before the all-null check so the reader stays
+        // in lockstep with the row index even when the row is dropped.
+        let ts = ts_reader.as_mut().and_then(|it| it.next().flatten());
+
+        if buf.len() == field_start {
+            // All fields were null; drop this row entirely.
+            buf.truncate(row_start);
             continue;
         }
 
-        if let Some(ts_col) = timestamp_column {
-            if let Ok(ts_column) = df.column(ts_col) {
-                let val = ts_column
-                    .get(row_idx)
-                    .map_err(|e| Error::Config(format!("polars row access error: {e}")))?;
-                if let Some(ts) = to_timestamp(val, precision) {
-                    line.push(' ');
-                    line.push_str(&ts.to_string());
-                }
-            }
+        if let Some(ts) = ts {
+            buf.push(b' ');
+            let mut itoa_buf = itoa::Buffer::new();
+            buf.extend_from_slice(itoa_buf.format(ts).as_bytes());
         }
-
-        lines.push(line);
     }
 
-    Ok(lines.join("\n"))
+    Ok(String::from_utf8(buf).expect("line protocol is valid UTF-8"))
 }
 
 /// A polars [`DataFrame`] bundled with the metadata needed to write it as line
@@ -409,38 +558,58 @@ mod tests {
     }
 
     #[test]
-    fn timestamp_value_serializes_supported_types() {
+    fn timestamp_reader_maps_supported_dtypes() {
+        fn first_ts(col: &Column, precision: Precision) -> Option<i64> {
+            timestamp_reader(col, precision).and_then(|mut it| it.next().flatten())
+        }
+
+        // Integer columns pass through, already in the caller's precision.
         let cases = [
-            (AnyValue::Null, Precision::Nanosecond, None),
-            (AnyValue::Int32(32), Precision::Nanosecond, Some(32)),
-            (AnyValue::Int64(64), Precision::Nanosecond, Some(64)),
-            (AnyValue::UInt32(32), Precision::Nanosecond, Some(32)),
-            (AnyValue::UInt64(64), Precision::Nanosecond, Some(64)),
+            (Column::new("ts".into(), [32_i32]), Some(32)),
+            (Column::new("ts".into(), [64_i64]), Some(64)),
+            (Column::new("ts".into(), [32_u32]), Some(32)),
+            (Column::new("ts".into(), [64_u64]), Some(64)),
+            // A null timestamp is omitted.
+            (Column::new("ts".into(), vec![None::<i64>]), None),
+        ];
+        for (col, expected) in cases {
+            assert_eq!(first_ts(&col, Precision::Nanosecond), expected);
+        }
+
+        // Datetime columns rescale from their stored TimeUnit to the target
+        // precision.
+        let dt = |v: i64, tu: TimeUnit| {
+            Column::new("ts".into(), [v])
+                .cast(&DataType::Datetime(tu, None))
+                .unwrap()
+        };
+        let cases = [
             (
-                AnyValue::Datetime(1_234_567_890, TimeUnit::Nanoseconds, None),
+                dt(1_234_567_890, TimeUnit::Nanoseconds),
                 Precision::Millisecond,
                 Some(1_234),
             ),
             (
-                AnyValue::Datetime(1_234, TimeUnit::Microseconds, None),
+                dt(1_234, TimeUnit::Microseconds),
                 Precision::Microsecond,
                 Some(1_234),
             ),
             (
-                AnyValue::Datetime(12, TimeUnit::Milliseconds, None),
+                dt(12, TimeUnit::Milliseconds),
                 Precision::Nanosecond,
                 Some(12_000_000),
             ),
-            (
-                AnyValue::String("not a timestamp"),
-                Precision::Nanosecond,
-                None,
-            ),
         ];
-
-        for (value, precision, expected) in cases {
-            assert_eq!(to_timestamp(value, precision), expected);
+        for (col, precision, expected) in cases {
+            assert_eq!(first_ts(&col, precision), expected);
         }
+
+        // Unsupported dtypes yield no reader: timestamp omitted on every row.
+        assert!(timestamp_reader(
+            &Column::new("ts".into(), ["not a timestamp"]),
+            Precision::Nanosecond
+        )
+        .is_none());
     }
 
     #[test]
@@ -473,5 +642,44 @@ mod tests {
                 "batch_size={batch_size}",
             );
         }
+    }
+
+    #[test]
+    fn typed_readers_cover_narrow_and_unsigned_dtypes() {
+        // i32/u32/f32 columns take the typed reader paths and must produce
+        // the same suffixes as the AnyValue fallback.
+        let df = df![
+            "i32v" => [-32_i32],
+            "u32v" => [32_u32],
+            "f32v" => [2.5_f32],
+            "ts"   => [10_i64],
+        ]
+        .unwrap();
+        let lp =
+            dataframe_to_line_protocol(&df, "m", &[], Some("ts"), Precision::Nanosecond).unwrap();
+        assert_eq!(lp, "m i32v=-32i,u32v=32u,f32v=2.5 10");
+    }
+
+    #[test]
+    fn chunked_columns_serialize_across_chunk_boundaries() {
+        // vstack leaves each column with two chunks; the typed iterators must
+        // walk both.
+        let mut df = df![
+            "host" => ["a"],
+            "v"    => [1.5_f64],
+            "ts"   => [10_i64],
+        ]
+        .unwrap();
+        let df2 = df![
+            "host" => ["b"],
+            "v"    => [2.5_f64],
+            "ts"   => [20_i64],
+        ]
+        .unwrap();
+        df.vstack_mut(&df2).unwrap();
+
+        let lp = dataframe_to_line_protocol(&df, "m", &["host"], Some("ts"), Precision::Nanosecond)
+            .unwrap();
+        assert_eq!(lp, "m,host=a v=1.5 10\nm,host=b v=2.5 20");
     }
 }

@@ -21,39 +21,63 @@ impl FieldValue {
     /// Write the value in line-protocol notation into `buf`.
     pub(crate) fn write_lp(&self, buf: &mut Vec<u8>) {
         match self {
-            FieldValue::Float(v) => {
-                if v.is_finite() {
-                    let mut ryu = ryu::Buffer::new();
-                    let s = ryu.format(*v);
-                    buf.extend_from_slice(s.as_bytes());
-                    // ryu always includes a decimal point for finite floats.
-                } else {
-                    // NaN / inf are not valid LP; emit the debug form so server
-                    // returns a clear per-line error rather than silent corruption.
-                    use std::io::Write;
-                    let _ = write!(buf, "{v}");
-                }
-            }
-            FieldValue::Integer(v) => {
-                let mut itoa_buf = itoa::Buffer::new();
-                buf.extend_from_slice(itoa_buf.format(*v).as_bytes());
-                buf.push(b'i');
-            }
-            FieldValue::UInteger(v) => {
-                let mut itoa_buf = itoa::Buffer::new();
-                buf.extend_from_slice(itoa_buf.format(*v).as_bytes());
-                buf.push(b'u');
-            }
-            FieldValue::String(v) => {
-                buf.push(b'"');
-                write_escaped_string_field(buf, v);
-                buf.push(b'"');
-            }
-            FieldValue::Boolean(v) => {
-                buf.extend_from_slice(if *v { b"true" } else { b"false" });
-            }
+            FieldValue::Float(v) => write_lp_f64(buf, *v),
+            FieldValue::Integer(v) => write_lp_int(buf, *v),
+            FieldValue::UInteger(v) => write_lp_uint(buf, *v),
+            FieldValue::String(v) => write_lp_string_field(buf, v),
+            FieldValue::Boolean(v) => write_lp_bool(buf, *v),
         }
     }
+}
+
+// Low-level line-protocol value writers, shared between the Point serializer
+// and the DataFrame serializer so the two paths cannot diverge on formatting.
+
+pub(crate) fn write_lp_f64(buf: &mut Vec<u8>, v: f64) {
+    if v.is_finite() {
+        let mut ryu = ryu::Buffer::new();
+        buf.extend_from_slice(ryu.format(v).as_bytes());
+        // ryu always includes a decimal point for finite floats.
+    } else {
+        // NaN / inf are not valid LP; emit the debug form so server
+        // returns a clear per-line error rather than silent corruption.
+        use std::io::Write;
+        let _ = write!(buf, "{v}");
+    }
+}
+
+/// f32 keeps its own writer (rather than widening to f64) so ryu emits the
+/// shortest f32 round-trip: 0.1_f32 stays "0.1", not "0.10000000149011612".
+pub(crate) fn write_lp_f32(buf: &mut Vec<u8>, v: f32) {
+    if v.is_finite() {
+        let mut ryu = ryu::Buffer::new();
+        buf.extend_from_slice(ryu.format(v).as_bytes());
+    } else {
+        use std::io::Write;
+        let _ = write!(buf, "{v}");
+    }
+}
+
+pub(crate) fn write_lp_int(buf: &mut Vec<u8>, v: i64) {
+    let mut itoa_buf = itoa::Buffer::new();
+    buf.extend_from_slice(itoa_buf.format(v).as_bytes());
+    buf.push(b'i');
+}
+
+pub(crate) fn write_lp_uint(buf: &mut Vec<u8>, v: u64) {
+    let mut itoa_buf = itoa::Buffer::new();
+    buf.extend_from_slice(itoa_buf.format(v).as_bytes());
+    buf.push(b'u');
+}
+
+pub(crate) fn write_lp_bool(buf: &mut Vec<u8>, v: bool) {
+    buf.extend_from_slice(if v { b"true" } else { b"false" });
+}
+
+pub(crate) fn write_lp_string_field(buf: &mut Vec<u8>, s: &str) {
+    buf.push(b'"');
+    write_escaped_string_field(buf, s);
+    buf.push(b'"');
 }
 
 impl fmt::Display for FieldValue {
@@ -380,8 +404,8 @@ fn write_escaped_tag_key(buf: &mut Vec<u8>, s: &str) {
     buf.extend_from_slice(escape_tag(s).as_bytes());
 }
 
-fn write_escaped_tag_value(buf: &mut Vec<u8>, s: &str) {
-    write_escaped_tag_key(buf, s); // same rules
+pub(crate) fn write_escaped_tag_value(buf: &mut Vec<u8>, s: &str) {
+    buf.extend_from_slice(escape_tag(s).as_bytes());
 }
 
 fn write_escaped_string_field(buf: &mut Vec<u8>, s: &str) {

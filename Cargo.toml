@@ -56,9 +56,15 @@ fastrand     = "2"
 polars = { version = "0.53.0", default-features = false, features = ["dtype-datetime", "dtype-date", "ipc"], optional = true }
 
 [dev-dependencies]
-tokio   = { version = "1", features = ["full", "test-util", "rt-multi-thread"] }
-mockito = "1"
-rcgen   = "0.14"
+tokio     = { version = "1", features = ["full", "test-util", "rt-multi-thread"] }
+mockito   = "1"
+rcgen     = "0.14"
+criterion = "0.7"
+
+[[bench]]
+name = "dataframe_lp"
+harness = false
+required-features = ["polars"]
 
 [[example]]
 name = "quickstart"
