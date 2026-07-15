@@ -93,25 +93,25 @@ enum FieldReader<'a> {
 fn field_reader(col: &Column) -> FieldReader<'_> {
     let s = col.as_materialized_series();
     match col.dtype() {
-        DataType::Int8 => {
-            FieldReader::Int(Box::new(s.i8().unwrap().into_iter().map(|o| o.map(i64::from))))
-        }
-        DataType::Int16 => {
-            FieldReader::Int(Box::new(s.i16().unwrap().into_iter().map(|o| o.map(i64::from))))
-        }
-        DataType::Int32 => {
-            FieldReader::Int(Box::new(s.i32().unwrap().into_iter().map(|o| o.map(i64::from))))
-        }
+        DataType::Int8 => FieldReader::Int(Box::new(
+            s.i8().unwrap().into_iter().map(|o| o.map(i64::from)),
+        )),
+        DataType::Int16 => FieldReader::Int(Box::new(
+            s.i16().unwrap().into_iter().map(|o| o.map(i64::from)),
+        )),
+        DataType::Int32 => FieldReader::Int(Box::new(
+            s.i32().unwrap().into_iter().map(|o| o.map(i64::from)),
+        )),
         DataType::Int64 => FieldReader::Int(Box::new(s.i64().unwrap().into_iter())),
-        DataType::UInt8 => {
-            FieldReader::UInt(Box::new(s.u8().unwrap().into_iter().map(|o| o.map(u64::from))))
-        }
-        DataType::UInt16 => {
-            FieldReader::UInt(Box::new(s.u16().unwrap().into_iter().map(|o| o.map(u64::from))))
-        }
-        DataType::UInt32 => {
-            FieldReader::UInt(Box::new(s.u32().unwrap().into_iter().map(|o| o.map(u64::from))))
-        }
+        DataType::UInt8 => FieldReader::UInt(Box::new(
+            s.u8().unwrap().into_iter().map(|o| o.map(u64::from)),
+        )),
+        DataType::UInt16 => FieldReader::UInt(Box::new(
+            s.u16().unwrap().into_iter().map(|o| o.map(u64::from)),
+        )),
+        DataType::UInt32 => FieldReader::UInt(Box::new(
+            s.u32().unwrap().into_iter().map(|o| o.map(u64::from)),
+        )),
         DataType::UInt64 => FieldReader::UInt(Box::new(s.u64().unwrap().into_iter())),
         DataType::Float32 => FieldReader::F32(Box::new(s.f32().unwrap().into_iter())),
         DataType::Float64 => FieldReader::F64(Box::new(s.f64().unwrap().into_iter())),
@@ -123,7 +123,11 @@ fn field_reader(col: &Column) -> FieldReader<'_> {
             FieldReader::Int(Box::new(s.datetime().unwrap().physical().into_iter()))
         }
         DataType::Date => FieldReader::Int(Box::new(
-            s.date().unwrap().physical().into_iter().map(|o| o.map(i64::from)),
+            s.date()
+                .unwrap()
+                .physical()
+                .into_iter()
+                .map(|o| o.map(i64::from)),
         )),
         _ => FieldReader::Fallback(col),
     }
@@ -601,13 +605,11 @@ mod tests {
         }
 
         // Unsupported dtypes yield no reader: timestamp omitted on every row.
-        assert!(
-            timestamp_reader(
-                &Column::new("ts".into(), ["not a timestamp"]),
-                Precision::Nanosecond
-            )
-            .is_none()
-        );
+        assert!(timestamp_reader(
+            &Column::new("ts".into(), ["not a timestamp"]),
+            Precision::Nanosecond
+        )
+        .is_none());
     }
 
     #[test]
