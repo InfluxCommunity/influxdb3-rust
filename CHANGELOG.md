@@ -9,6 +9,10 @@
    Floats on the DataFrame path now format via ryu, matching `Point`, so extreme
    magnitudes emit exponent notation instead of expanded decimals.
 
+### CI
+
+1. [#41](https://github.com/InfluxCommunity/influxdb3-rust/pull/41): Set up auto merge dependabot workflow.
+
 ## 0.2.0 [2026-06-16]
 
 ### Features
