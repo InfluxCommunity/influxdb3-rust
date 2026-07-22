@@ -59,7 +59,7 @@ polars = { version = "0.53.0", default-features = false, features = ["dtype-date
 tokio     = { version = "1", features = ["full", "test-util", "rt-multi-thread"] }
 mockito   = "1"
 rcgen     = "0.14"
-criterion = "0.7"
+criterion = "0.8"
 
 [[bench]]
 name = "dataframe_lp"
