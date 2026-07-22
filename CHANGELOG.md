@@ -9,6 +9,10 @@
    Floats on the DataFrame path now format via ryu, matching `Point`, so extreme
    magnitudes emit exponent notation instead of expanded decimals.
 
+### Dependencies
+
+1. [#20](https://github.com/InfluxCommunity/influxdb3-rust/pull/20): Upgrade Arrow dependencies from version 58 to 59.
+
 ### CI
 
 1. [#41](https://github.com/InfluxCommunity/influxdb3-rust/pull/41): Set up auto merge dependabot workflow.
