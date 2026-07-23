@@ -108,6 +108,16 @@ jobs:
             - cargo-cache-v1-{{ arch }}-<< parameters.rust-image >>-{{ checksum "Cargo.lock" }}
             - cargo-cache-v1-{{ arch }}-<< parameters.rust-image >>-
 
+      - when:
+          condition:
+            and:
+              - equal: [ docker-amd64-image, << parameters.exe >> ]
+              - equal: [ << pipeline.parameters.default-rust-image >>, << parameters.rust-image >> ]
+          steps:
+            - run:
+                name: Check package
+                command: cargo package --locked
+
       - run:
           name: Install cargo-nextest
           command: |
@@ -174,10 +184,6 @@ jobs:
                 key: cargo-tools-v1-{{ arch }}-<< parameters.rust-image >>
                 paths:
                   - ~/.cargo/bin
-
-            - run:
-                name: Check package
-                command: cargo package --locked
 
       - store_test_results:
           path: test-results
