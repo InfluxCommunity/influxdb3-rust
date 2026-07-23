@@ -38,36 +38,8 @@ executors:
     resource_class: arm.medium
 
 commands:
-  upload-codecov-amd64:
+  configure-cargo:
     steps:
-      - run:
-          name: Collecting coverage reports
-          command: |
-            curl -Os https://uploader.codecov.io/latest/linux/codecov
-            curl -Os https://uploader.codecov.io/latest/linux/codecov.SHA256SUM
-            curl -Os https://uploader.codecov.io/latest/linux/codecov.SHA256SUM.sig
-            curl -fsSL https://uploader.codecov.io/verification.gpg | gpg --no-default-keyring --keyring trustedkeys.gpg --import
-            gpgv codecov.SHA256SUM.sig codecov.SHA256SUM
-            shasum -a 256 -c codecov.SHA256SUM
-            chmod +x ./codecov
-            ./codecov
-
-jobs:
-  tests-rust:
-    parameters:
-      exe:
-        type: string
-        default: docker-amd64-image
-      rust-image:
-        type: string
-        default: << pipeline.parameters.default-rust-image >>
-    executor:
-      name: << parameters.exe >>
-      rust-image: << parameters.rust-image >>
-
-    steps:
-      - checkout
-
       - run:
           name: Configure Cargo for CI
           command: |
@@ -84,20 +56,57 @@ jobs:
             debug = 0
             EOF
 
+  upload-codecov-amd64:
+    steps:
+      - run:
+          name: Collecting coverage reports
+          command: |
+            curl -Os https://uploader.codecov.io/latest/linux/codecov
+            curl -Os https://uploader.codecov.io/latest/linux/codecov.SHA256SUM
+            curl -Os https://uploader.codecov.io/latest/linux/codecov.SHA256SUM.sig
+            curl -fsSL https://uploader.codecov.io/verification.gpg | gpg --no-default-keyring --keyring trustedkeys.gpg --import
+            gpgv codecov.SHA256SUM.sig codecov.SHA256SUM
+            shasum -a 256 -c codecov.SHA256SUM
+            chmod +x ./codecov
+            ./codecov
+
+jobs:
+  check-msrv-compatibility:
+    docker:
+      - image: << pipeline.parameters.msrv-rust-image >>
+    steps:
+      - checkout
+      - configure-cargo
+      - restore_cache:
+          name: Restoring Cargo Cache
+          keys:
+            - cargo-cache-v1-{{ arch }}-<< pipeline.parameters.msrv-rust-image >>-{{ checksum "Cargo.lock" }}
+            - cargo-cache-v1-{{ arch }}-<< pipeline.parameters.msrv-rust-image >>-
+      - run:
+          name: Check MSRV compatibility
+          command: cargo check --locked --all-targets --all-features
+
+  tests-rust:
+    parameters:
+      exe:
+        type: string
+        default: docker-amd64-image
+      rust-image:
+        type: string
+        default: << pipeline.parameters.default-rust-image >>
+    executor:
+      name: << parameters.exe >>
+      rust-image: << parameters.rust-image >>
+
+    steps:
+      - checkout
+      - configure-cargo
+
       - restore_cache:
           name: Restoring Cargo Cache
           keys:
             - cargo-cache-v1-{{ arch }}-<< parameters.rust-image >>-{{ checksum "Cargo.lock" }}
             - cargo-cache-v1-{{ arch }}-<< parameters.rust-image >>-
-
-      - run:
-          name: Check MSRV compatibility
-          command: |
-            cargo check --locked --all-targets --all-features
-
-      - run:
-          name: Check package
-          command: cargo package --locked
 
       - run:
           name: Install cargo-nextest
@@ -166,6 +175,10 @@ jobs:
                 paths:
                   - ~/.cargo/bin
 
+            - run:
+                name: Check package
+                command: cargo package --locked
+
       - store_test_results:
           path: test-results
 
@@ -181,7 +194,10 @@ workflows:
   version: 2
   build:
     jobs:
+      - check-msrv-compatibility
       - tests-rust:
+          requires:
+            - check-msrv-compatibility
           matrix:
             parameters:
               exe: [ docker-amd64-image, docker-arm64-image ]
