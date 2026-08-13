@@ -2,6 +2,10 @@
 
 ## 0.4.0 [unreleased]
 
+### Bug Fixes
+
+1. [#49](https://github.com/InfluxCommunity/influxdb3-rust/pull/49): Extra validation on `Point#write_line_protocol()` to error out if fields contains any newline (`\n`) character.
+
 ## 0.3.0 [2026-08-27]
 
 > ⚠️ This release requires Rust 1.91 or later.
