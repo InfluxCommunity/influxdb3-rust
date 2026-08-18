@@ -17,6 +17,10 @@
 
 1. [#41](https://github.com/InfluxCommunity/influxdb3-rust/pull/41): Set up auto merge dependabot workflow.
 
+## Bug Fixes
+
+1. [#49](https://github.com/InfluxCommunity/influxdb3-rust/pull/49): Extra validation on `Point#write_line_protocol()` to error out if fields contains any newline (`\n`) character.
+
 ## 0.2.0 [2026-06-16]
 
 ### Features
