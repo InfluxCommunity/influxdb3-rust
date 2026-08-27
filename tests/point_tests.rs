@@ -80,3 +80,31 @@ fn last_write_wins() {
     assert_eq!(lp.matches("v=").count(), 1);
     assert!(lp.contains("v=2i"));
 }
+
+#[test]
+#[should_panic = "contains a line break"]
+fn tag_names_should_reject_newlines() {
+    Point::new("m")
+        .tag("t\nag", "value")
+        .field("v", 1)
+        .to_line_protocol(Precision::Nanosecond)
+        .unwrap();
+}
+#[test]
+#[should_panic = "contains a line break"]
+fn tag_values_should_reject_newlines() {
+    Point::new("m")
+        .tag("tag", "val\nue")
+        .field("v", 1)
+        .to_line_protocol(Precision::Nanosecond)
+        .unwrap();
+}
+#[test]
+#[should_panic = "contains a line break"]
+fn field_names_should_reject_newlines() {
+    Point::new("m")
+        .tag("tag", "value")
+        .field("fi\neld", 1)
+        .to_line_protocol(Precision::Nanosecond)
+        .unwrap();
+}
