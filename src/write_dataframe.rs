@@ -93,40 +93,40 @@ enum FieldReader<'a> {
 fn field_reader(col: &Column) -> FieldReader<'_> {
     let s = col.as_materialized_series();
     match col.dtype() {
-        DataType::Int8 => FieldReader::Int(Box::new(
-            s.i8().unwrap().into_iter().map(|o| o.map(i64::from)),
-        )),
-        DataType::Int16 => FieldReader::Int(Box::new(
-            s.i16().unwrap().into_iter().map(|o| o.map(i64::from)),
-        )),
-        DataType::Int32 => FieldReader::Int(Box::new(
-            s.i32().unwrap().into_iter().map(|o| o.map(i64::from)),
-        )),
-        DataType::Int64 => FieldReader::Int(Box::new(s.i64().unwrap().into_iter())),
-        DataType::UInt8 => FieldReader::UInt(Box::new(
-            s.u8().unwrap().into_iter().map(|o| o.map(u64::from)),
-        )),
-        DataType::UInt16 => FieldReader::UInt(Box::new(
-            s.u16().unwrap().into_iter().map(|o| o.map(u64::from)),
-        )),
-        DataType::UInt32 => FieldReader::UInt(Box::new(
-            s.u32().unwrap().into_iter().map(|o| o.map(u64::from)),
-        )),
-        DataType::UInt64 => FieldReader::UInt(Box::new(s.u64().unwrap().into_iter())),
-        DataType::Float32 => FieldReader::F32(Box::new(s.f32().unwrap().into_iter())),
-        DataType::Float64 => FieldReader::F64(Box::new(s.f64().unwrap().into_iter())),
-        DataType::Boolean => FieldReader::Bool(Box::new(s.bool().unwrap().into_iter())),
-        DataType::String => FieldReader::Str(Box::new(s.str().unwrap().into_iter())),
+        DataType::Int8 => {
+            FieldReader::Int(Box::new(s.i8().unwrap().iter().map(|o| o.map(i64::from))))
+        }
+        DataType::Int16 => {
+            FieldReader::Int(Box::new(s.i16().unwrap().iter().map(|o| o.map(i64::from))))
+        }
+        DataType::Int32 => {
+            FieldReader::Int(Box::new(s.i32().unwrap().iter().map(|o| o.map(i64::from))))
+        }
+        DataType::Int64 => FieldReader::Int(Box::new(s.i64().unwrap().iter())),
+        DataType::UInt8 => {
+            FieldReader::UInt(Box::new(s.u8().unwrap().iter().map(|o| o.map(u64::from))))
+        }
+        DataType::UInt16 => {
+            FieldReader::UInt(Box::new(s.u16().unwrap().iter().map(|o| o.map(u64::from))))
+        }
+        DataType::UInt32 => {
+            FieldReader::UInt(Box::new(s.u32().unwrap().iter().map(|o| o.map(u64::from))))
+        }
+        DataType::UInt64 => FieldReader::UInt(Box::new(s.u64().unwrap().iter())),
+        DataType::Float32 => FieldReader::F32(Box::new(s.f32().unwrap().iter())),
+        DataType::Float64 => FieldReader::F64(Box::new(s.f64().unwrap().iter())),
+        DataType::Boolean => FieldReader::Bool(Box::new(s.bool().unwrap().iter())),
+        DataType::String => FieldReader::Str(Box::new(s.str().unwrap().iter())),
         // Temporal field columns are emitted as their physical integer with an
         // `i` suffix, matching the `to_field_value` fallback.
         DataType::Datetime(_, _) => {
-            FieldReader::Int(Box::new(s.datetime().unwrap().physical().into_iter()))
+            FieldReader::Int(Box::new(s.datetime().unwrap().physical().iter()))
         }
         DataType::Date => FieldReader::Int(Box::new(
             s.date()
                 .unwrap()
                 .physical()
-                .into_iter()
+                .iter()
                 .map(|o| o.map(i64::from)),
         )),
         _ => FieldReader::Fallback(col),
@@ -141,9 +141,9 @@ enum TagReader<'a> {
 
 fn tag_reader(col: &Column) -> TagReader<'_> {
     match col.dtype() {
-        DataType::String => TagReader::Str(Box::new(
-            col.as_materialized_series().str().unwrap().into_iter(),
-        )),
+        DataType::String => {
+            TagReader::Str(Box::new(col.as_materialized_series().str().unwrap().iter()))
+        }
         _ => TagReader::Fallback(col),
     }
 }
@@ -159,19 +159,15 @@ fn tag_reader(col: &Column) -> TagReader<'_> {
 fn timestamp_reader(col: &Column, precision: Precision) -> Option<OptIter<'_, i64>> {
     let s = col.as_materialized_series();
     match col.dtype() {
-        DataType::Int64 => Some(Box::new(s.i64().unwrap().into_iter())),
-        DataType::Int32 => Some(Box::new(
-            s.i32().unwrap().into_iter().map(|o| o.map(i64::from)),
-        )),
+        DataType::Int64 => Some(Box::new(s.i64().unwrap().iter())),
+        DataType::Int32 => Some(Box::new(s.i32().unwrap().iter().map(|o| o.map(i64::from)))),
         DataType::UInt64 => Some(Box::new(
-            s.u64().unwrap().into_iter().map(|o| o.map(|v| v as i64)),
+            s.u64().unwrap().iter().map(|o| o.map(|v| v as i64)),
         )),
-        DataType::UInt32 => Some(Box::new(
-            s.u32().unwrap().into_iter().map(|o| o.map(i64::from)),
-        )),
+        DataType::UInt32 => Some(Box::new(s.u32().unwrap().iter().map(|o| o.map(i64::from)))),
         DataType::Datetime(tu, _) => {
             let tu = *tu;
-            Some(Box::new(s.datetime().unwrap().physical().into_iter().map(
+            Some(Box::new(s.datetime().unwrap().physical().iter().map(
                 move |o| {
                     o.map(|v| {
                         let nanos = match tu {
