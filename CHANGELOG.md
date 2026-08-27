@@ -2,6 +2,8 @@
 
 ## 0.3.0 [unreleased]
 
+> ⚠️ This release requires Rust 1.91 or later.
+
 ### Performance
 
 1. [#30](https://github.com/InfluxCommunity/influxdb3-rust/pull/30): Rewrite the polars DataFrame serializer with typed column iterators
@@ -12,6 +14,7 @@
 ### Dependencies
 
 1. [#20](https://github.com/InfluxCommunity/influxdb3-rust/pull/20): Upgrade Arrow dependencies from version 58 to 59.
+2. [#22](https://github.com/InfluxCommunity/influxdb3-rust/pull/22): Upgrade Polars from version 0.53 to 0.54.
 
 ### CI
 

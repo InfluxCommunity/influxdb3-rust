@@ -2,7 +2,7 @@
 name = "influxdb3-client"
 version = "0.3.0"
 edition = "2021"
-rust-version = "1.89"
+rust-version = "1.91"
 description = "Rust client for InfluxDB 3 Core and Enterprise"
 license = "MIT"
 readme = "README.md"
@@ -53,7 +53,7 @@ indexmap     = "2"
 itoa         = "1"
 ryu          = "1"
 fastrand     = "2"
-polars = { version = "0.53.0", default-features = false, features = ["dtype-datetime", "dtype-date", "ipc"], optional = true }
+polars = { version = "0.54.4", default-features = false, features = ["dtype-datetime", "dtype-date", "ipc"], optional = true }
 
 [dev-dependencies]
 tokio     = { version = "1", features = ["full", "test-util", "rt-multi-thread"] }
