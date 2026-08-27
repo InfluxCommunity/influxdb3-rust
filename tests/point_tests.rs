@@ -108,3 +108,12 @@ fn field_names_should_reject_newlines() {
         .to_line_protocol(Precision::Nanosecond)
         .unwrap();
 }
+
+#[test]
+#[should_panic = "contains a line break"]
+fn field_values_should_reject_newlines() {
+    Point::new("m")
+        .field("field", "val\nue")
+        .to_line_protocol(Precision::Nanosecond)
+        .unwrap();
+}
