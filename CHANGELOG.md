@@ -1,5 +1,7 @@
 # Change Log
 
+## 0.4.0 [unreleased]
+
 ## 0.3.0 [2026-08-27]
 
 > ⚠️ This release requires Rust 1.91 or later.
