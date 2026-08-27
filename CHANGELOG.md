@@ -12,7 +12,8 @@
 ### Dependencies
 
 1. [#20](https://github.com/InfluxCommunity/influxdb3-rust/pull/20): Upgrade Arrow dependencies from version 58 to 59.
-2. [#22](https://github.com/InfluxCommunity/influxdb3-rust/pull/22): Upgrade Polars from version 0.53 to 0.54 and require Rust 1.91 or later.
+2. [#22](https://github.com/InfluxCommunity/influxdb3-rust/pull/22): Upgrade Polars from version 0.53 to 0.54.
+   Require Rust 1.91 or later.
 
 ### CI
 
