@@ -1,5 +1,5 @@
 /// Line-protocol serialisation tests.
-use influxdb3_client::{Point, Precision};
+use influxdb3_client::{Error, Point, Precision};
 
 #[test]
 fn full_serialisation() {
@@ -79,4 +79,43 @@ fn last_write_wins() {
     assert!(lp.contains("host=second"));
     assert_eq!(lp.matches("v=").count(), 1);
     assert!(lp.contains("v=2i"));
+}
+
+#[test]
+fn line_protocol_rejects_unsupported_control_characters() {
+    let cases = [
+        ("measurement", Point::new("me\nasurement").field("v", 1_i64)),
+        (
+            "tag key",
+            Point::new("m").tag("tag\rkey", "value").field("v", 1_i64),
+        ),
+        (
+            "tag value",
+            Point::new("m").tag("key", "value\t").field("v", 1_i64),
+        ),
+        ("field key", Point::new("m").field("field\nkey", 1_i64)),
+        (
+            "string field value",
+            Point::new("m").field("field", "value\r"),
+        ),
+    ];
+
+    for (position, point) in cases {
+        let result = point.to_line_protocol(Precision::Nanosecond);
+        assert!(
+            matches!(result, Err(Error::InvalidPointData(_))),
+            "{position} should be rejected, got {result:?}"
+        );
+    }
+}
+
+#[test]
+fn line_protocol_preserves_literal_backslash_sequences() {
+    let lp = Point::new("m")
+        .tag("key", r#"literal\n"#)
+        .field("field", r#"literal\r\t"#)
+        .to_line_protocol(Precision::Nanosecond)
+        .unwrap();
+
+    assert_eq!(lp, r#"m,key=literal\n field="literal\\r\\t""#);
 }

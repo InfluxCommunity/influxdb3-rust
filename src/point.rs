@@ -231,7 +231,8 @@ impl Point {
 
     /// Serialise the point to InfluxDB line protocol with the given precision.
     ///
-    /// Returns an error if the point has no fields.
+    /// Returns an error if the point has no fields or contains a newline,
+    /// carriage return, or tab in a structured line-protocol value.
     pub fn to_line_protocol(&self, precision: Precision) -> Result<String, Error> {
         let mut buf = Vec::with_capacity(64);
         let mut key_scratch = Vec::new();
@@ -258,6 +259,27 @@ impl Point {
                 "point '{}' has no fields; at least one field is required",
                 self.measurement
             )));
+        }
+
+        validate_line_protocol_text("measurement", &self.measurement)?;
+        for (key, value) in &self.tags {
+            validate_line_protocol_text("tag key", key)?;
+            validate_line_protocol_text("tag value", value)?;
+        }
+        for (key, value) in default_tags {
+            // Point-level tags win during the merge, so an overridden default
+            // value is never serialised and must not make the point invalid.
+            if self.tags.contains_key(key) {
+                continue;
+            }
+            validate_line_protocol_text("default tag key", key)?;
+            validate_line_protocol_text("default tag value", value)?;
+        }
+        for (key, value) in &self.fields {
+            validate_line_protocol_text("field key", key)?;
+            if let FieldValue::String(value) = value {
+                validate_line_protocol_text("string field value", value)?;
+            }
         }
 
         // Measurement
@@ -369,8 +391,8 @@ fn tag_needs_escape(b: u8) -> bool {
     matches!(b, b',' | b'=' | b' ')
 }
 
-/// Escape a measurement name (commas and spaces). Shared with the DataFrame
-/// writer so both paths use the same rules.
+/// Escape a measurement name (commas and spaces).
+/// Shared with the DataFrame writer so both paths use the same rules.
 pub(crate) fn escape_measurement(s: &str) -> Cow<'_, str> {
     escape_with(s, measurement_needs_escape)
 }
@@ -394,6 +416,26 @@ pub(crate) fn escape_string_field(s: &str) -> Cow<'_, str> {
         out.push(ch);
     }
     Cow::Owned(out)
+}
+
+/// Reject control characters that line protocol cannot represent without
+/// changing the stored value or breaking the batch into multiple lines.
+pub(crate) fn validate_line_protocol_text(context: &str, input: &str) -> Result<(), Error> {
+    if let Some(character) = input
+        .chars()
+        .find(|character| matches!(character, '\n' | '\r' | '\t'))
+    {
+        let escaped = match character {
+            '\n' => r#"\n"#,
+            '\r' => r#"\r"#,
+            '\t' => r#"\t"#,
+            _ => unreachable!(),
+        };
+        return Err(Error::InvalidPointData(format!(
+            "{context} contains unsupported control character {escaped}"
+        )));
+    }
+    Ok(())
 }
 
 fn write_escaped_measurement(buf: &mut Vec<u8>, s: &str) {

@@ -2,6 +2,13 @@
 
 ## 0.4.0 [unreleased]
 
+### Bug Fixes
+
+1. [#49](https://github.com/InfluxCommunity/influxdb3-rust/pull/49): Reject
+   newline, carriage return, and tab characters in measurements, tags, field
+   keys, and string field values across Point and DataFrame writes instead of
+   silently changing their stored representation.
+
 ## 0.3.0 [2026-08-27]
 
 > ⚠️ This release requires Rust 1.91 or later.
