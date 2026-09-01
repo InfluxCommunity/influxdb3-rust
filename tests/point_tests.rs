@@ -1,5 +1,5 @@
 /// Line-protocol serialisation tests.
-use influxdb3_client::{Error, Point, Precision};
+use influxdb3_client::{Point, Precision};
 
 #[test]
 fn full_serialisation() {
@@ -82,30 +82,38 @@ fn last_write_wins() {
 }
 
 #[test]
-fn line_protocol_rejects_unsupported_control_characters() {
+fn line_protocol_escapes_control_characters() {
     let cases = [
-        ("measurement", Point::new("me\nasurement").field("v", 1_i64)),
+        (
+            "measurement",
+            Point::new("me\nasurement").field("v", 1_i64),
+            r#"me\nasurement v=1i"#,
+        ),
         (
             "tag key",
             Point::new("m").tag("tag\rkey", "value").field("v", 1_i64),
+            r#"m,tag\rkey=value v=1i"#,
         ),
         (
             "tag value",
             Point::new("m").tag("key", "value\t").field("v", 1_i64),
+            r#"m,key=value\t v=1i"#,
         ),
-        ("field key", Point::new("m").field("field\nkey", 1_i64)),
+        (
+            "field key",
+            Point::new("m").field("field\nkey", 1_i64),
+            r#"m field\nkey=1i"#,
+        ),
         (
             "string field value",
             Point::new("m").field("field", "value\r"),
+            r#"m field="value\r""#,
         ),
     ];
 
-    for (position, point) in cases {
-        let result = point.to_line_protocol(Precision::Nanosecond);
-        assert!(
-            matches!(result, Err(Error::InvalidPointData(_))),
-            "{position} should be rejected, got {result:?}"
-        );
+    for (position, point, expected) in cases {
+        let actual = point.to_line_protocol(Precision::Nanosecond).unwrap();
+        assert_eq!(actual, expected, "{position} should be escaped");
     }
 }
 

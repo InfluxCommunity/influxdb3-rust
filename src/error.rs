@@ -74,11 +74,6 @@ pub enum Error {
     #[error("configuration error: {0}")]
     Config(String),
 
-    /// Point data contains a character that cannot be represented safely in
-    /// the structured line-protocol write paths.
-    #[error("invalid point data: {0}")]
-    InvalidPointData(String),
-
     /// Required environment variable was not set
     #[error("environment variable '{0}' is not set")]
     EnvVar(String),

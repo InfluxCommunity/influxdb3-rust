@@ -1,5 +1,5 @@
 /// Write-path integration tests against a mockito HTTP server.
-use influxdb3_client::{Client, ClientConfig, Error, Point, Precision};
+use influxdb3_client::{Client, ClientConfig, Point, Precision};
 use mockito::{Matcher, Server};
 
 async fn make_client(server: &Server) -> Client {
@@ -154,24 +154,33 @@ async fn default_tags_and_order_reach_the_wire() {
 }
 
 #[tokio::test]
-async fn default_tags_reject_line_breaks_and_tabs() {
-    let server = Server::new_async().await;
+async fn default_tags_escape_line_breaks_and_tabs() {
+    let mut server = Server::new_async().await;
     let client = make_client(&server).await;
 
-    for (key, value) in [("env\nkey", "prod"), ("env", "prod\rvalue\t")] {
-        let result = client
+    for (key, value, expected) in [
+        ("env\nkey", "prod", r#"m,env\nkey=prod v=1i"#),
+        ("env", "prod\rvalue\t", r#"m,env=prod\rvalue\t v=1i"#),
+    ] {
+        let mock = server
+            .mock("POST", "/api/v3/write_lp")
+            .match_query(Matcher::Any)
+            .match_body(expected)
+            .with_status(204)
+            .create_async()
+            .await;
+
+        client
             .write(vec![Point::new("m").field("v", 1_i64)])
             .default_tag(key, value)
-            .await;
-        assert!(
-            matches!(result, Err(Error::InvalidPointData(_))),
-            "default tag {key:?}={value:?} should be rejected, got {result:?}"
-        );
+            .await
+            .unwrap();
+        mock.assert_async().await;
     }
 }
 
 #[tokio::test]
-async fn point_tag_override_ignores_invalid_default_value() {
+async fn point_tag_override_does_not_serialize_default_value() {
     let mut server = Server::new_async().await;
     let m = server
         .mock("POST", "/api/v3/write_lp")

@@ -4,10 +4,10 @@
 
 ### Bug Fixes
 
-1. [#59](https://github.com/InfluxCommunity/influxdb3-rust/pull/59): Reject
-   newline, carriage return, and tab characters in measurements, tags, field
-   keys, and string field values across Point and DataFrame writes instead of
-   silently changing their stored representation.
+1. [#59](https://github.com/InfluxCommunity/influxdb3-rust/pull/59): Escape
+   newline, carriage return, and tab characters as literal `\n`, `\r`, and
+   `\t` sequences in measurements, tags, field keys, and string field values
+   across Point and DataFrame writes.
 
 ## 0.3.0 [2026-08-27]
 

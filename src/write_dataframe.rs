@@ -10,9 +10,8 @@ use std::collections::HashSet;
 use polars::prelude::{AnyValue, Column, DataFrame, DataType, TimeUnit};
 
 use crate::point::{
-    escape_measurement, escape_string_field, escape_tag, validate_line_protocol_text,
-    write_escaped_tag_value, write_lp_bool, write_lp_f32, write_lp_f64, write_lp_int,
-    write_lp_string_field, write_lp_uint,
+    escape_measurement, escape_string_field, escape_tag, write_escaped_tag_value, write_lp_bool,
+    write_lp_f32, write_lp_f64, write_lp_int, write_lp_string_field, write_lp_uint,
 };
 use crate::{error::Error, precision::Precision};
 
@@ -218,8 +217,8 @@ fn row_access_err(e: polars::error::PolarsError) -> Error {
 /// * Null field values omit that field for the row.
 /// * Rows where **all** fields are null are dropped entirely.
 /// * A null timestamp is omitted, so the server assigns the time.
-/// * Newline, carriage return, and tab characters in structured values return
-///   [`Error::InvalidPointData`] rather than being silently changed.
+/// * Newline, carriage return, and tab characters in structured values are
+///   escaped to the literal sequences `\n`, `\r`, and `\t`.
 pub fn dataframe_to_line_protocol(
     df: &DataFrame,
     measurement: &str,
@@ -233,7 +232,6 @@ pub fn dataframe_to_line_protocol(
     }
 
     let meas_escaped = escape_measurement(measurement);
-    validate_line_protocol_text("measurement", measurement)?;
     let tag_set: HashSet<&str> = tags.iter().copied().collect();
 
     // Resolve columns and escape their names once, before the row loop.
@@ -241,7 +239,6 @@ pub fn dataframe_to_line_protocol(
     let mut tag_cols: Vec<(Cow<'_, str>, TagReader<'_>)> = Vec::new();
     for &t in tags {
         if let Ok(c) = df.column(t) {
-            validate_line_protocol_text("tag key", t)?;
             tag_cols.push((escape_tag(t), tag_reader(c)));
         }
     }
@@ -258,7 +255,6 @@ pub fn dataframe_to_line_protocol(
             !tag_set.contains(name) && Some(name) != timestamp_column
         };
         if is_field {
-            validate_line_protocol_text("field key", c.name().as_str())?;
             field_cols.push((escape_tag(c.name().as_str()), field_reader(c)));
         }
     }
@@ -277,19 +273,10 @@ pub fn dataframe_to_line_protocol(
         buf.extend_from_slice(meas_escaped.as_bytes());
 
         // Tags are emitted in the order given by the caller.
-        // Defer tag validation errors until field presence is known because
-        // rows with all-null fields are dropped without emitting their tags.
-        let mut tag_error = None;
         for (name, reader) in tag_cols.iter_mut() {
             match reader {
                 TagReader::Str(it) => {
                     if let Some(v) = it.next().flatten() {
-                        if let Err(error) = validate_line_protocol_text("tag value", v) {
-                            if tag_error.is_none() {
-                                tag_error = Some(error);
-                            }
-                            continue;
-                        }
                         buf.push(b',');
                         buf.extend_from_slice(name.as_bytes());
                         buf.push(b'=');
@@ -299,12 +286,6 @@ pub fn dataframe_to_line_protocol(
                 TagReader::Fallback(col) => {
                     let val = col.get(row_idx).map_err(row_access_err)?;
                     if let Some(tv) = to_tag_value(val) {
-                        if let Err(error) = validate_line_protocol_text("tag value", &tv) {
-                            if tag_error.is_none() {
-                                tag_error = Some(error);
-                            }
-                            continue;
-                        }
                         buf.push(b',');
                         buf.extend_from_slice(name.as_bytes());
                         buf.push(b'=');
@@ -351,7 +332,6 @@ pub fn dataframe_to_line_protocol(
                 }
                 FieldReader::Str(it) => {
                     if let Some(v) = it.next().flatten() {
-                        validate_line_protocol_text("string field value", v)?;
                         write_field_prefix(&mut buf, &mut first, name);
                         write_lp_string_field(&mut buf, v);
                     }
@@ -359,7 +339,6 @@ pub fn dataframe_to_line_protocol(
                 FieldReader::Fallback(col) => {
                     let val = col.get(row_idx).map_err(row_access_err)?;
                     if let Some(fv) = to_field_value(val) {
-                        validate_line_protocol_text("field value", &fv)?;
                         write_field_prefix(&mut buf, &mut first, name);
                         buf.extend_from_slice(fv.as_bytes());
                     }
@@ -375,10 +354,6 @@ pub fn dataframe_to_line_protocol(
             // All fields were null; drop this row entirely.
             buf.truncate(row_start);
             continue;
-        }
-
-        if let Some(error) = tag_error {
-            return Err(error);
         }
 
         if let Some(ts) = ts {
@@ -714,46 +689,55 @@ mod tests {
     }
 
     #[test]
-    fn dataframe_rejects_unsupported_control_characters() {
+    fn dataframe_escapes_control_characters() {
         let cases = [
             (
                 "measurement",
                 df!["v" => [1_i64]].unwrap(),
                 "me\nas",
                 &[][..],
+                r#"me\nas v=1i"#,
             ),
             (
                 "tag key",
                 df!["tag\rkey" => ["value"], "v" => [1_i64]].unwrap(),
                 "m",
                 &["tag\rkey"][..],
+                r#"m,tag\rkey=value v=1i"#,
+            ),
+            (
+                "tag value",
+                df!["tag" => ["value\n"], "v" => [1_i64]].unwrap(),
+                "m",
+                &["tag"][..],
+                r#"m,tag=value\n v=1i"#,
             ),
             (
                 "field key",
                 df!["field\tkey" => [1_i64]].unwrap(),
                 "m",
                 &[][..],
+                r#"m field\tkey=1i"#,
             ),
             (
                 "string field value",
                 df!["v" => ["value\n"]].unwrap(),
                 "m",
                 &[][..],
+                r#"m v="value\n""#,
             ),
         ];
 
-        for (position, df, measurement, tags) in cases {
-            let result =
-                dataframe_to_line_protocol(&df, measurement, tags, None, Precision::Nanosecond);
-            assert!(
-                matches!(result, Err(crate::error::Error::InvalidPointData(_))),
-                "{position} should be rejected, got {result:?}"
-            );
+        for (position, df, measurement, tags, expected) in cases {
+            let actual =
+                dataframe_to_line_protocol(&df, measurement, tags, None, Precision::Nanosecond)
+                    .unwrap();
+            assert_eq!(actual, expected, "{position} should be escaped");
         }
     }
 
     #[test]
-    fn dataframe_ignores_invalid_tags_on_dropped_rows() {
+    fn dataframe_drops_all_null_rows_with_control_characters_in_tags() {
         let df = df![
             "host" => ["invalid\ntag", "safe"],
             "v" => [None::<i64>, Some(1_i64)],
