@@ -355,45 +355,48 @@ fn escape_with(input: &str, needs_escape: fn(u8) -> bool) -> Cow<'_, str> {
     for ch in input.chars() {
         if ch.is_ascii() && needs_escape(ch as u8) {
             out.push('\\');
+            match ch {
+                '\n' => out.push('n'),
+                '\r' => out.push('r'),
+                '\t' => out.push('t'),
+                _ => out.push(ch),
+            }
+        } else {
+            out.push(ch);
         }
-        out.push(ch);
     }
     Cow::Owned(out)
 }
 
 fn measurement_needs_escape(b: u8) -> bool {
-    matches!(b, b',' | b' ')
+    matches!(b, b',' | b' ' | b'\n' | b'\r' | b'\t')
 }
 
 fn tag_needs_escape(b: u8) -> bool {
-    matches!(b, b',' | b'=' | b' ')
+    matches!(b, b',' | b'=' | b' ' | b'\n' | b'\r' | b'\t')
 }
 
-/// Escape a measurement name (commas and spaces). Shared with the DataFrame
-/// writer so both paths use the same rules.
+fn string_field_needs_escape(b: u8) -> bool {
+    matches!(b, b'\\' | b'"' | b'\n' | b'\r' | b'\t')
+}
+
+/// Escape a measurement name (commas, spaces, and control characters).
+/// Shared with the DataFrame writer so both paths use the same rules.
 pub(crate) fn escape_measurement(s: &str) -> Cow<'_, str> {
     escape_with(s, measurement_needs_escape)
 }
 
-/// Escape a tag key, tag value, or field key (commas, equals, spaces).
+/// Escape a tag key, tag value, or field key (commas, equals, spaces, and
+/// control characters).
 pub(crate) fn escape_tag(s: &str) -> Cow<'_, str> {
     escape_with(s, tag_needs_escape)
 }
 
-/// Escape the contents of a string field (backslash and double-quote). The
-/// caller is responsible for the surrounding quotes.
+/// Escape the contents of a string field (backslash, double-quote, newline,
+/// carriage return, and tab). The caller is responsible for the surrounding
+/// quotes.
 pub(crate) fn escape_string_field(s: &str) -> Cow<'_, str> {
-    if !s.bytes().any(|b| b == b'\\' || b == b'"') {
-        return Cow::Borrowed(s);
-    }
-    let mut out = String::with_capacity(s.len() + 8);
-    for ch in s.chars() {
-        if ch == '\\' || ch == '"' {
-            out.push('\\');
-        }
-        out.push(ch);
-    }
-    Cow::Owned(out)
+    escape_with(s, string_field_needs_escape)
 }
 
 fn write_escaped_measurement(buf: &mut Vec<u8>, s: &str) {
