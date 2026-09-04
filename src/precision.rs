@@ -18,13 +18,23 @@ pub enum Precision {
 }
 
 impl Precision {
-    /// Returns the API query-parameter string for this precision.
+    /// Returns the v3 API query-parameter string for this precision.
     pub fn as_str(self) -> &'static str {
         match self {
             Precision::Nanosecond => "nanosecond",
             Precision::Microsecond => "microsecond",
             Precision::Millisecond => "millisecond",
             Precision::Second => "second",
+        }
+    }
+
+    /// Returns the v2 API query-parameter string for this precision.
+    pub fn as_v2_str(self) -> &'static str {
+        match self {
+            Precision::Nanosecond => "ns",
+            Precision::Microsecond => "us",
+            Precision::Millisecond => "ms",
+            Precision::Second => "s",
         }
     }
 
@@ -78,6 +88,19 @@ mod tests {
         ] {
             assert_eq!(p.as_str().parse::<Precision>().unwrap(), p);
             assert_eq!(p.scale_timestamp(ns), scaled);
+        }
+    }
+
+    #[test]
+    fn v2_str_roundtrip() {
+        for (p, expected) in [
+            (Precision::Nanosecond, "ns"),
+            (Precision::Microsecond, "us"),
+            (Precision::Millisecond, "ms"),
+            (Precision::Second, "s"),
+        ] {
+            assert_eq!(p.as_v2_str(), expected);
+            assert_eq!(expected.parse::<Precision>().unwrap(), p);
         }
     }
 }
