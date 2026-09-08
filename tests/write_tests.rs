@@ -154,6 +154,52 @@ async fn default_tags_and_order_reach_the_wire() {
 }
 
 #[tokio::test]
+async fn default_tags_escape_line_breaks_and_tabs() {
+    let mut server = Server::new_async().await;
+    let client = make_client(&server).await;
+
+    for (key, value, expected) in [
+        ("env\nkey", "prod", r#"m,env\nkey=prod v=1i"#),
+        ("env", "prod\rvalue\t", r#"m,env=prod\rvalue\t v=1i"#),
+    ] {
+        let mock = server
+            .mock("POST", "/api/v3/write_lp")
+            .match_query(Matcher::Any)
+            .match_body(expected)
+            .with_status(204)
+            .create_async()
+            .await;
+
+        client
+            .write(vec![Point::new("m").field("v", 1_i64)])
+            .default_tag(key, value)
+            .await
+            .unwrap();
+        mock.assert_async().await;
+    }
+}
+
+#[tokio::test]
+async fn point_tag_override_does_not_serialize_default_value() {
+    let mut server = Server::new_async().await;
+    let m = server
+        .mock("POST", "/api/v3/write_lp")
+        .match_query(Matcher::Any)
+        .match_body("m,env=safe v=1i")
+        .with_status(204)
+        .create_async()
+        .await;
+
+    let client = make_client(&server).await;
+    client
+        .write(vec![Point::new("m").tag("env", "safe").field("v", 1_i64)])
+        .default_tag("env", "invalid\nvalue")
+        .await
+        .unwrap();
+    m.assert_async().await;
+}
+
+#[tokio::test]
 async fn non_retryable_error_surfaces_once() {
     // A 404 is deterministic, so it surfaces immediately without retrying.
     // (Transient 5xx/retry behaviour is covered in retry_tests.rs.)
