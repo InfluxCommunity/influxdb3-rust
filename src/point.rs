@@ -259,6 +259,37 @@ impl Point {
                 self.measurement
             )));
         }
+        // VALIDATION: '\n' characters are not supported
+        for (k, v) in self.tags() {
+            if k.contains('\n') || v.contains('\n') {
+                return Err(Error::Config(
+                    format!(
+                        "tag '{k}' contains a line break which is unsupported in line protocol; point '{}'",
+                        self.measurement
+                    )
+                ));
+            }
+        }
+        for (k, v) in self.fields() {
+            if k.contains('\n') {
+                return Err(Error::Config(
+                    format!(
+                        "field '{k}' contains a line break which is unsupported in line protocol; point '{}'",
+                        self.measurement
+                    )
+                ));
+            }
+            if let FieldValue::String(s) = v {
+                if s.contains('\n') {
+                    return Err(Error::Config(
+                        format!(
+                            "field '{k}' contains a line break which is unsupported in line protocol; point '{}'",
+                            self.measurement
+                        )
+                    ));
+                }
+            }
+        }
 
         // Measurement
         write_escaped_measurement(buf, &self.measurement);
