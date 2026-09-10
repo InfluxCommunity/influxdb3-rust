@@ -165,7 +165,12 @@ impl Client {
             (url, p)
         };
 
-        params.push(("precision", opts.precision.as_str().to_string()));
+        let precision_str = if opts.use_v2_api {
+            opts.precision.as_v2_str()
+        } else {
+            opts.precision.as_str()
+        };
+        params.push(("precision", precision_str.to_string()));
 
         // Compress once; each attempt re-sends the same (Arc-backed) Bytes.
         let (final_body, compressed) = maybe_gzip(body, opts.gzip_threshold).await?;
