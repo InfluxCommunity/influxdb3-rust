@@ -1,16 +1,16 @@
-use std::collections::HashMap;
-use std::future::IntoFuture;
-use std::io::Write as IoWrite;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-
 use bytes::Bytes;
 use futures_util::stream::{self, StreamExt, TryStreamExt};
 use reqwest::{
     header::{AUTHORIZATION, CONTENT_ENCODING, CONTENT_TYPE, RETRY_AFTER},
     Client as HttpClient, ClientBuilder, Response,
 };
+use serde_json::Value;
+use std::collections::HashMap;
+use std::future::IntoFuture;
+use std::io::Write as IoWrite;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::OnceCell;
 
 use crate::{
@@ -190,7 +190,7 @@ impl Client {
         let mut attempt: u32 = 0;
         loop {
             let req = base.try_clone().expect("write body is cloneable");
-            match send_write_once(req).await {
+            match send_write_once(req, opts).await {
                 WriteAttempt::Ok => return Ok(()),
                 WriteAttempt::Fatal(e) => return Err(e),
                 WriteAttempt::Retry { after, last } => {
@@ -553,7 +553,10 @@ enum WriteAttempt {
 }
 
 /// Send one write request and classify the result into a [`WriteAttempt`].
-async fn send_write_once(req: reqwest::RequestBuilder) -> WriteAttempt {
+async fn send_write_once(
+    req: reqwest::RequestBuilder,
+    write_options: &WriteOptions,
+) -> WriteAttempt {
     match req.send().await {
         Err(e) => {
             let retryable = retry::retryable_reqwest(&e);
@@ -578,9 +581,9 @@ async fn send_write_once(req: reqwest::RequestBuilder) -> WriteAttempt {
                 .get(RETRY_AFTER)
                 .and_then(|v| v.to_str().ok())
                 .and_then(retry::parse_retry_after);
-            // A partial write is a 400, so it falls through to Fatal here:
+            // A partial writing is a 400, so it falls through to Fatal here:
             // a deterministic data error, never a transient one.
-            let err = parse_write_error(code, resp).await;
+            let err = parse_write_error(code, resp, write_options).await;
             if retry::retryable_status(code) {
                 WriteAttempt::Retry {
                     after: retry_after,
@@ -593,31 +596,62 @@ async fn send_write_once(req: reqwest::RequestBuilder) -> WriteAttempt {
     }
 }
 
-/// Parse a non-2xx write response body into an [`Error`] (partial write vs server).
-async fn parse_write_error(code: u16, resp: Response) -> Error {
+/// Parse a non-2xx writing response body into an [`Error`] (partial write vs server).
+async fn parse_write_error(code: u16, resp: Response, write_options: &WriteOptions) -> Error {
     let body = resp.text().await.unwrap_or_default();
 
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) {
-        let is_partial = v
-            .get("error")
-            .and_then(|e| e.as_str())
-            .map(|s| s.contains("partial write"))
-            .unwrap_or(false);
+    if let Ok(v) = serde_json::from_str::<Value>(&body) {
+        let msg = v
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or_default();
+        if !msg.is_empty() {
+            return Error::Server {
+                code,
+                message: msg.to_owned(),
+            };
+        }
 
-        if is_partial && v.get("data").and_then(|d| d.as_array()).is_some() {
+        let base_message = v.get("error").and_then(|e| e.as_str()).unwrap_or_default();
+        if base_message.is_empty() {
+            return Error::Server {
+                code,
+                message: body.to_string(),
+            };
+        }
+
+        if is_partial_write_error(code, &v, write_options) {
+            // InfluxDB 3 Core/Enterprise partial write error format:
+            // {"error":"...","data":[{"error_message":"...","line_number":2,"original_line": "..."}]}
+            let (all_typed, line_errors) = parse_line_errors(&v);
+            let msgs =
+                create_error_msg_details(all_typed, &line_errors, v.get("data").unwrap_or(&v));
+            let mut message = base_message.to_owned();
+            if !msgs.is_empty() {
+                message = message + ":\n\t" + &msgs.join("\n\t");
+            }
+
             return Error::PartialWrite(PartialWriteError {
-                line_errors: parse_line_errors(&v),
+                message,
+                line_errors,
             });
         }
 
-        let msg = v
-            .get("error")
-            .or_else(|| v.get("message"))
-            .and_then(|m| m.as_str())
-            .unwrap_or(&body)
-            .to_owned();
+        if let Some(error_str) = v.get("error").and_then(|e| e.as_str()) {
+            // Core/Enterprise object format:
+            // {"error":"...","data":{"error_message":"..."}}
+            let data_node = v.get("data").unwrap_or(&v);
+            let formatted_msg = format_object_data_error(data_node, error_str);
+            return Error::Server {
+                code,
+                message: formatted_msg,
+            };
+        }
 
-        return Error::Server { code, message: msg };
+        return Error::Server {
+            code,
+            message: msg.to_owned(),
+        };
     }
 
     Error::Server {
@@ -626,22 +660,92 @@ async fn parse_write_error(code: u16, resp: Response) -> Error {
     }
 }
 
-fn parse_line_errors(v: &serde_json::Value) -> Vec<LineError> {
-    v.get("data")
-        .and_then(|d| d.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|e| {
-                    Some(LineError {
-                        line: e.get("line_number")?.as_u64()?,
-                        message: e.get("error_message")?.as_str()?.to_owned(),
-                        original_line: e
-                            .get("original_line")
-                            .and_then(|s| s.as_str())
-                            .map(str::to_owned),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+fn parse_line_errors(v: &Value) -> (bool, Vec<LineError>) {
+    let Some(data) = v.get("data").and_then(Value::as_array) else {
+        return (false, Vec::new());
+    };
+
+    let mut line_errors = Vec::with_capacity(data.len());
+    let mut all_typed = true;
+
+    for item in data {
+        match parse_single_line_error(item) {
+            Some(err) => line_errors.push(err),
+            None => all_typed = false,
+        }
+    }
+
+    (all_typed, line_errors)
+}
+
+fn parse_single_line_error(line: &Value) -> Option<LineError> {
+    let obj = line.as_object()?;
+
+    let line_number = match obj.get("line_number") {
+        Some(val) => Some(val.as_u64()?),
+        None => None,
+    };
+
+    let error_message = obj
+        .get("error_message")?
+        .as_str()
+        .filter(|s| !s.is_empty())?;
+
+    let original_line = obj
+        .get("original_line")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+
+    Some(LineError {
+        line: line_number,
+        message: error_message.to_owned(),
+        original_line,
+    })
+}
+
+pub fn create_error_msg_details(
+    all_typed: bool,
+    line_errors: &[LineError],
+    data: &Value,
+) -> Vec<String> {
+    let Some(data_array) = data.as_array() else {
+        return Vec::new();
+    };
+
+    if all_typed {
+        line_errors.iter().map(ToString::to_string).collect()
+    } else {
+        data_array.iter().map(ToString::to_string).collect()
+    }
+}
+
+fn format_object_data_error(data_node: &Value, error: &str) -> String {
+    let Some(error_message) = data_node
+        .get("error_message")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    else {
+        return error.to_string();
+    };
+
+    let line_number = data_node.get("line_number").and_then(Value::as_u64);
+    let original_line = data_node
+        .get("original_line")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty());
+
+    match (line_number, original_line) {
+        (Some(line), Some(orig)) => format!("{error}:\n\tline {line}: {error_message} ({orig})"),
+        (Some(line), None) => format!("{error}:\n\tline {line}: {error_message}"),
+        (None, _) => format!("{error}:\n\t{error_message}"),
+    }
+}
+
+fn is_partial_write_error(code: u16, v: &Value, write_options: &WriteOptions) -> bool {
+    write_options.accept_partial
+        && code == 400
+        && !write_options.use_v2_api
+        && v.is_object()
+        && v.get("data").and_then(|d| d.as_array()).is_some()
+        && !v.get("data").and_then(|d| d.as_array()).unwrap().is_empty()
 }
