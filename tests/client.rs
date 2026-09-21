@@ -1,6 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use influxdb3_client::{Client, ClientConfig, Point, Row, Value};
+use influxdb3_client::{Client, ClientConfig, Error, Point, Row, Value, WriteOptions};
 
 const MEASUREMENT: &str = "rust_e2e";
 const LOCATION: &str = "sun-valley-1";
@@ -59,6 +59,126 @@ async fn write_and_query_data() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(row["testId"].as_i64(), Some(test_id));
     assert_eq!(row["text"].as_str(), Some("a1"));
     assert_eq!(row["time"], Value::Timestamp(test_id));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn write_error_api_v2() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(config) = testing_config() else {
+        eprintln!("skipping e2e test: TESTING_INFLUXDB_* env vars are not set");
+        return Ok(());
+    };
+
+    const POINTS: &str = "temperature,room=room1 value=18.94647\n\
+     temperatureroom=room2value=20.268019\n\
+     temperature,room=room3 value=24.064857\n\
+     temperature,room=room4 value=43i";
+
+    let client = Client::new(config).await?;
+    match client
+        .write(POINTS)
+        .with_options(WriteOptions {
+            accept_partial: false,
+            use_v2_api: true,
+            ..WriteOptions::default()
+        })
+        .await
+    {
+        Ok(_) => (),
+        Err(err) => match err {
+            Error::Server { code, message } => {
+                assert_eq!(code, 400);
+                assert!(message.eq("write buffer error: line protocol parse failed: Expected at least one space character, got end of input"));
+            }
+            _ => panic!("expected Server error, got: {err}"),
+        },
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn write_error_api_v3() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(config) = testing_config() else {
+        eprintln!("skipping e2e test: TESTING_INFLUXDB_* env vars are not set");
+        return Ok(());
+    };
+
+    const POINTS: &str = "temperature,room=room1 value=18.94647\n\
+     temperatureroom=room2value=20.268019\n\
+     temperature,room=room3 value=24.064857\n\
+     temperature,room=room4 value=43i";
+
+    let client = Client::new(config).await?;
+    match client
+        .write(POINTS)
+        .with_options(WriteOptions {
+            accept_partial: false,
+            use_v2_api: false,
+            ..WriteOptions::default()
+        })
+        .await
+    {
+        Ok(_) => (),
+        Err(err) => match err {
+            Error::Server { code, message } => {
+                assert_eq!(code, 400);
+                assert!(message.contains("line protocol parsing error"));
+            }
+            _ => panic!("expected Server error, got: {err}"),
+        },
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn partial_write_error() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(config) = testing_config() else {
+        eprintln!("skipping e2e test: TESTING_INFLUXDB_* env vars are not set");
+        return Ok(());
+    };
+
+    const POINTS: &str = "home,room=Sunroom temp=96 1735545600\n\
+    home,room=Sunroom temp=\"hi\" 1735545610\n\
+    home,room=Sunroom temp=88i 1735545620";
+
+    let client = Client::new(config).await?;
+    match client
+        .write(POINTS)
+        .with_options(WriteOptions {
+            accept_partial: true,
+            use_v2_api: false,
+            ..WriteOptions::default()
+        })
+        .await
+    {
+        Ok(_) => (),
+        Err(err) => match err {
+            Error::PartialWrite(e) => {
+                assert_eq!(e.message, "partial write of line protocol occurred:\n\tline 2: invalid column type for column 'temp', expected iox::column_type::field::float, got iox::column_type::field::string (home,room=Sunroom te)\n\tline 3: invalid column type for column 'temp', expected iox::column_type::field::float, got iox::column_type::field::integer (home,room=Sunroom te)");
+                assert_eq!(e.line_errors.len(), 2);
+
+                let mut line = e.line_errors.first().unwrap();
+                assert_eq!(line.line, Some(2));
+                assert_eq!(line.message, "invalid column type for column 'temp', expected iox::column_type::field::float, got iox::column_type::field::string");
+                assert_eq!(
+                    line.original_line.as_ref().unwrap().as_str(),
+                    "home,room=Sunroom te"
+                );
+
+                line = e.line_errors.get(1).unwrap();
+                assert_eq!(line.line, Some(3));
+                assert_eq!(line.message, "invalid column type for column 'temp', expected iox::column_type::field::float, got iox::column_type::field::integer");
+                assert_eq!(
+                    line.original_line.as_ref().unwrap().as_str(),
+                    "home,room=Sunroom te"
+                );
+            }
+            _ => panic!("expected PartialWrite, got: {err}"),
+        },
+    }
 
     Ok(())
 }

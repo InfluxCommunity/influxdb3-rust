@@ -327,7 +327,7 @@ let line_protocol =
 
 if let Err(Error::PartialWrite(e)) = client.write(line_protocol).await {
     for line_error in &e.line_errors {
-        eprintln!("line {}: {}", line_error.line, line_error.message);
+        eprintln!("{line_error}");
     }
 }
 ```

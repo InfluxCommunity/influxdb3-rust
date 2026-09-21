@@ -4,7 +4,7 @@ use thiserror::Error;
 #[derive(Debug, Clone)]
 pub struct LineError {
     /// 1-based line number in the submitted batch.
-    pub line: u64,
+    pub line: Option<u64>,
     /// Error message from the server.
     pub message: String,
     /// The (possibly truncated) original line as echoed by the server.
@@ -13,7 +13,13 @@ pub struct LineError {
 
 impl std::fmt::Display for LineError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "line {}: {}", self.line, self.message)
+        match (self.line, self.original_line.as_deref()) {
+            (Some(line), Some(original_line)) => {
+                write!(f, "line {line}: {} ({original_line})", self.message)
+            }
+            (Some(line), None) => write!(f, "line {line}: {}", self.message),
+            (None, _) => write!(f, "{}", self.message),
+        }
     }
 }
 
@@ -22,12 +28,9 @@ impl std::fmt::Display for LineError {
 /// The server accepts the valid lines and returns HTTP 400 with a JSON body
 /// listing every rejected line. Check `line_errors` for details.
 #[derive(Debug, Error)]
-#[error(
-    "partial write: {} line(s) rejected; first error: {}",
-    line_errors.len(),
-    line_errors.first().map(|e| e.message.as_str()).unwrap_or("unknown")
-)]
+#[error("{message}")]
 pub struct PartialWriteError {
+    pub message: String,
     pub line_errors: Vec<LineError>,
 }
 
@@ -81,4 +84,53 @@ pub enum Error {
     /// Query result contained an Arrow data type this client cannot decode.
     #[error("unsupported Arrow data type in query result: {data_type}")]
     UnsupportedArrowType { data_type: String },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_line_error_display() {
+        let err1 = LineError {
+            line: Some(1),
+            message: "parsing error".to_string(),
+            original_line: Some("cpu x=1".to_string()),
+        };
+        assert_eq!(err1.to_string(), "line 1: parsing error (cpu x=1)");
+
+        let err2 = LineError {
+            line: Some(2),
+            message: "type mismatch".to_string(),
+            original_line: None,
+        };
+        assert_eq!(err2.to_string(), "line 2: type mismatch");
+
+        let err3 = LineError {
+            line: None,
+            message: "generic error".to_string(),
+            original_line: None,
+        };
+        assert_eq!(err3.to_string(), "generic error");
+
+        let err4 = LineError {
+            line: None,
+            message: "generic error with line".to_string(),
+            original_line: Some("cpu x=1".to_string()),
+        };
+        assert_eq!(err4.to_string(), "generic error with line");
+    }
+}
+
+#[test]
+fn test_partial_write_error_display() {
+    let error = PartialWriteError {
+        message: "partial write of line protocol occurred:\n\tline 2: bad value".to_string(),
+        line_errors: vec![],
+    };
+
+    assert_eq!(
+        error.to_string(),
+        "partial write of line protocol occurred:\n\tline 2: bad value"
+    );
 }
