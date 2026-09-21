@@ -1,4 +1,3 @@
-use arrow::datatypes::ArrowNativeType;
 use influxdb3_client::error::LineError;
 /// Write-path integration tests against a mockito HTTP server.
 use influxdb3_client::{Client, ClientConfig, Error, Point, Precision};
