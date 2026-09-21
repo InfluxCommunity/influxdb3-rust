@@ -2,6 +2,15 @@
 
 ## 0.4.0 [unreleased]
 
+### Bug Fixes
+
+1. [#66](https://github.com/InfluxCommunity/influxdb3-rust/pull/66):
+    - Only throws `Error::PartialWrite` when:
+        - Error response status code is `400`.
+        - Error response format `{"error":"...","data":[{"error_message":"...","line_number":2,"original_line": "..."}]}` is returned with `data` must be an array.
+        - `accept_partial` is set to `true`.
+        - Write endpoint must be `api/v3/write_lp`.
+
 ## 0.3.0 [2026-08-27]
 
 > ⚠️ This release requires Rust 1.91 or later.
