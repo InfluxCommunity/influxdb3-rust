@@ -28,10 +28,10 @@ reqwest = { version = "0.12", default-features = false, features = [
 ] }
 
 # Arrow + Flight (gRPC query transport)
-arrow        = { version = "59", features = ["ipc"] }
-arrow-array  = "59"
-arrow-schema = "59"
-arrow-flight = "59"
+arrow        = { version = "60", features = ["ipc"] }
+arrow-array  = "60"
+arrow-schema = "60"
+arrow-flight = "60"
 
 # gRPC transport
 tonic = { version = "0.14", features = ["tls-ring", "tls-native-roots"] }
