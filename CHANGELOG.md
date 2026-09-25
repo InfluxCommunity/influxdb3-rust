@@ -2,6 +2,10 @@
 
 ## 0.4.0 [unreleased]
 
+### Dependencies
+
+- Require Rust 1.95 or later for Polars 0.55 compatibility.
+
 ## 0.3.0 [2026-08-27]
 
 > ⚠️ This release requires Rust 1.91 or later.
