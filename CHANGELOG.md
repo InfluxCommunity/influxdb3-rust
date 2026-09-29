@@ -2,6 +2,13 @@
 
 ## 0.4.0 [unreleased]
 
+### Bug Fixes
+
+1. [#59](https://github.com/InfluxCommunity/influxdb3-rust/pull/59): Escape
+   newline, carriage return, and tab characters as literal `\n`, `\r`, and
+   `\t` sequences in measurements, tags, field keys, and string field values
+   across Point and DataFrame writes.
+
 ### Dependencies
 
 1. [#54](https://github.com/InfluxCommunity/influxdb3-rust/pull/54): Require Rust 1.95 or later for Polars 0.55 compatibility.

@@ -217,6 +217,8 @@ fn row_access_err(e: polars::error::PolarsError) -> Error {
 /// * Null field values omit that field for the row.
 /// * Rows where **all** fields are null are dropped entirely.
 /// * A null timestamp is omitted, so the server assigns the time.
+/// * Newline, carriage return, and tab characters in structured values are
+///   escaped to the literal sequences `\n`, `\r`, and `\t`.
 pub fn dataframe_to_line_protocol(
     df: &DataFrame,
     measurement: &str,
@@ -234,21 +236,28 @@ pub fn dataframe_to_line_protocol(
 
     // Resolve columns and escape their names once, before the row loop.
     // Missing tag columns are silently skipped (unchanged behaviour).
-    let mut tag_cols: Vec<(Cow<'_, str>, TagReader<'_>)> = tags
-        .iter()
-        .filter_map(|&t| df.column(t).ok().map(|c| (escape_tag(t), tag_reader(c))))
-        .collect();
+    let mut tag_cols: Vec<(Cow<'_, str>, TagReader<'_>)> = Vec::new();
+    for &t in tags {
+        if let Ok(c) = df.column(t) {
+            tag_cols.push((escape_tag(t), tag_reader(c)));
+        }
+    }
 
     // All columns that are not tag columns and not the timestamp column,
     // in frame order.
-    let mut field_cols: Vec<(Cow<'_, str>, FieldReader<'_>)> = (0..df.width())
-        .filter_map(|i| df.select_at_idx(i))
-        .filter(|c| {
+    let mut field_cols: Vec<(Cow<'_, str>, FieldReader<'_>)> = Vec::new();
+    for i in 0..df.width() {
+        let Some(c) = df.select_at_idx(i) else {
+            continue;
+        };
+        let is_field = {
             let name = c.name().as_str();
             !tag_set.contains(name) && Some(name) != timestamp_column
-        })
-        .map(|c| (escape_tag(c.name().as_str()), field_reader(c)))
-        .collect();
+        };
+        if is_field {
+            field_cols.push((escape_tag(c.name().as_str()), field_reader(c)));
+        }
+    }
 
     let mut ts_reader = timestamp_column
         .and_then(|t| df.column(t).ok())
@@ -677,5 +686,67 @@ mod tests {
         let lp = dataframe_to_line_protocol(&df, "m", &["host"], Some("ts"), Precision::Nanosecond)
             .unwrap();
         assert_eq!(lp, "m,host=a v=1.5 10\nm,host=b v=2.5 20");
+    }
+
+    #[test]
+    fn dataframe_escapes_control_characters() {
+        let cases = [
+            (
+                "measurement",
+                df!["v" => [1_i64]].unwrap(),
+                "me\nas",
+                &[][..],
+                r#"me\nas v=1i"#,
+            ),
+            (
+                "tag key",
+                df!["tag\rkey" => ["value"], "v" => [1_i64]].unwrap(),
+                "m",
+                &["tag\rkey"][..],
+                r#"m,tag\rkey=value v=1i"#,
+            ),
+            (
+                "tag value",
+                df!["tag" => ["value\n"], "v" => [1_i64]].unwrap(),
+                "m",
+                &["tag"][..],
+                r#"m,tag=value\n v=1i"#,
+            ),
+            (
+                "field key",
+                df!["field\tkey" => [1_i64]].unwrap(),
+                "m",
+                &[][..],
+                r#"m field\tkey=1i"#,
+            ),
+            (
+                "string field value",
+                df!["v" => ["value\n"]].unwrap(),
+                "m",
+                &[][..],
+                r#"m v="value\n""#,
+            ),
+        ];
+
+        for (position, df, measurement, tags, expected) in cases {
+            let actual =
+                dataframe_to_line_protocol(&df, measurement, tags, None, Precision::Nanosecond)
+                    .unwrap();
+            assert_eq!(actual, expected, "{position} should be escaped");
+        }
+    }
+
+    #[test]
+    fn dataframe_drops_all_null_rows_with_control_characters_in_tags() {
+        let df = df![
+            "host" => ["invalid\ntag", "safe"],
+            "v" => [None::<i64>, Some(1_i64)],
+        ]
+        .unwrap();
+
+        let lp =
+            dataframe_to_line_protocol(&df, "m", &["host"], None, Precision::Nanosecond).unwrap();
+
+        assert_eq!(lp, "m,host=safe v=1i");
     }
 }
