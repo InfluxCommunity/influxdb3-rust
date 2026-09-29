@@ -213,4 +213,4 @@ workflows:
           matrix:
             parameters:
               exe: [ docker-amd64-image, docker-arm64-image ]
-              rust-image: [ << pipeline.parameters.default-rust-image >>, << pipeline.parameters.msrv-rust-image >> ]
+              rust-image: [ << pipeline.parameters.default-rust-image >>, << pipeline.parameters.msrv-rust-image >>, "cimg/rust:1.95" ]
