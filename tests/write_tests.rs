@@ -588,26 +588,26 @@ async fn test_write_error_classification() {
 }
 
 #[tokio::test]
-async fn test_v2_precision(){
+async fn test_v2_precision() {
     struct V2PrecisionCase {
         url_encode: &'static str,
         precision: Precision,
     }
 
     let precision_cases = vec![
-        V2PrecisionCase{
+        V2PrecisionCase {
             url_encode: "ns",
             precision: Precision::Nanosecond,
         },
-        V2PrecisionCase{
+        V2PrecisionCase {
             url_encode: "us",
             precision: Precision::Microsecond,
         },
-        V2PrecisionCase{
+        V2PrecisionCase {
             url_encode: "ms",
             precision: Precision::Millisecond,
         },
-        V2PrecisionCase{
+        V2PrecisionCase {
             url_encode: "s",
             precision: Precision::Second,
         },
@@ -618,9 +618,10 @@ async fn test_v2_precision(){
 
         let _m = server
             .mock("POST", "/api/v2/write")
-            .match_query(Matcher::AllOf(vec![
-                Matcher::UrlEncoded("precision".into(), case.url_encode.into()),
-            ]))
+            .match_query(Matcher::AllOf(vec![Matcher::UrlEncoded(
+                "precision".into(),
+                case.url_encode.into(),
+            )]))
             .with_status(204)
             .expect_at_least(1)
             .create_async()
@@ -646,10 +647,17 @@ async fn test_v2_precision(){
                 .write_options(write_options)
                 .build()
                 .unwrap(),
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
-        client.write("cpu usage=1.0").await.expect(format!("Write with precision {} as \"{}\" should succeed",
-                                                           case.precision, case.url_encode).as_str());
+        client.write("cpu usage=1.0").await.expect(
+            format!(
+                "Write with precision {} as \"{}\" should succeed",
+                case.precision, case.url_encode
+            )
+            .as_str(),
+        );
 
         _m.assert_async().await;
     }

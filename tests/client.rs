@@ -236,7 +236,10 @@ async fn write_and_query_data_with_v2_precision() -> Result<(), Box<dyn std::err
     assert_eq!(row["valid"].as_bool(), Some(true));
     assert_eq!(row["testId"].as_i64(), Some(test_id));
     assert_eq!(row["text"].as_str(), Some("a1"));
-    assert_eq!(row["time"], Value::Timestamp((test_id / 1_000_000_000 ) * 1_000_000_000 ));
+    assert_eq!(
+        row["time"],
+        Value::Timestamp((test_id / 1_000_000_000) * 1_000_000_000)
+    );
 
     Ok(())
 }
