@@ -1,6 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use influxdb3_client::{Client, ClientConfig, Error, Point, Row, Value, WriteOptions};
+use influxdb3_client::{Client, ClientConfig, Error, Point, Precision, Row, Value, WriteOptions};
 
 const MEASUREMENT: &str = "rust_e2e";
 const LOCATION: &str = "sun-valley-1";
@@ -179,6 +179,64 @@ async fn partial_write_error() -> Result<(), Box<dyn std::error::Error>> {
             _ => panic!("expected PartialWrite, got: {err}"),
         },
     }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn write_and_query_data_with_v2_precision() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(config) = testing_config() else {
+        eprintln!("skipping e2e test: TESTING_INFLUXDB_* env vars are not set");
+        return Ok(());
+    };
+
+    let v2_write_options = WriteOptions {
+        precision: Precision::Second,
+        default_tags: config.write_options.default_tags.clone(),
+        gzip_threshold: config.write_options.gzip_threshold,
+        no_sync: config.write_options.no_sync,
+        accept_partial: config.write_options.accept_partial,
+        use_v2_api: true,
+        tag_order: config.write_options.tag_order,
+        batch_size: config.write_options.batch_size,
+        max_inflight: config.write_options.max_inflight,
+    };
+
+    let v2_config = ClientConfig::builder()
+        .host(config.host.clone())
+        .database(config.database.clone())
+        .token(config.token.unwrap())
+        .write_options(v2_write_options)
+        .build()
+        .expect("v2 config should be built correctly");
+
+    let client = Client::new(v2_config).await?;
+    let test_id = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as i64;
+
+    let point = Point::new(MEASUREMENT)
+        .tag("location", LOCATION)
+        .field("temp", 15.5_f64)
+        .field("index", 80_i64)
+        .field("uindex", 800_u64)
+        .field("valid", true)
+        .field("testId", test_id)
+        .field("text", "a1")
+        .timestamp_nanos(test_id);
+
+    client.write(vec![point]).await?;
+
+    let row = query_written_point(&client, test_id)
+        .await?
+        .unwrap_or_else(|| panic!("expected to query back point with test_id={test_id}"));
+
+    assert_eq!(row["location"].as_str(), Some(LOCATION));
+    assert_eq!(row["temp"].as_f64(), Some(15.5));
+    assert_eq!(row["index"].as_i64(), Some(80));
+    assert_eq!(row["uindex"], Value::U64(800));
+    assert_eq!(row["valid"].as_bool(), Some(true));
+    assert_eq!(row["testId"].as_i64(), Some(test_id));
+    assert_eq!(row["text"].as_str(), Some("a1"));
+    assert_eq!(row["time"], Value::Timestamp((test_id / 1_000_000_000 ) * 1_000_000_000 ));
 
     Ok(())
 }
