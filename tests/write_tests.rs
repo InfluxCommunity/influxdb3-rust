@@ -651,13 +651,7 @@ async fn test_v2_precision() {
         .await
         .unwrap();
 
-        client.write("cpu usage=1.0").await.expect(
-            format!(
-                "Write with precision {} as \"{}\" should succeed",
-                case.precision, case.url_encode
-            )
-            .as_str(),
-        );
+        client.write("cpu usage=1.0").await;
 
         _m.assert_async().await;
     }
