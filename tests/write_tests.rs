@@ -52,7 +52,7 @@ async fn v2_write_uses_bucket_query_parameter() {
         .mock("POST", "/api/v2/write")
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("bucket".into(), "testdb".into()),
-            Matcher::UrlEncoded("precision".into(), "nanosecond".into()),
+            Matcher::UrlEncoded("precision".into(), "ns".into()),
         ]))
         .match_header("Authorization", "Bearer test-token")
         .match_header("Content-Type", Matcher::Regex("text/plain.*".into()))
