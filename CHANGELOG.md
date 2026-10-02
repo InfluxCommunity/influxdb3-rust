@@ -4,6 +4,7 @@
 
 ### Bug Fixes
 
+1. [#69](https://github.com/InfluxCommunity/influxdb3-rust/pull/69): Set the correct write precision string when calling the V2 API.
 1. [#66](https://github.com/InfluxCommunity/influxdb3-rust/pull/66):
     - Only throws `Error::PartialWrite` when:
         - Error response status code is `400`.

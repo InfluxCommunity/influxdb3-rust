@@ -1,6 +1,6 @@
 use influxdb3_client::error::LineError;
 /// Write-path integration tests against a mockito HTTP server.
-use influxdb3_client::{Client, ClientConfig, Error, Point, Precision};
+use influxdb3_client::{Client, ClientConfig, Error, Point, Precision, WriteOptions};
 use mockito::{Matcher, Server};
 
 async fn make_client(server: &Server) -> Client {
@@ -52,7 +52,7 @@ async fn v2_write_uses_bucket_query_parameter() {
         .mock("POST", "/api/v2/write")
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("bucket".into(), "testdb".into()),
-            Matcher::UrlEncoded("precision".into(), "nanosecond".into()),
+            Matcher::UrlEncoded("precision".into(), "ns".into()),
         ]))
         .match_header("Authorization", "Bearer test-token")
         .match_header("Content-Type", Matcher::Regex("text/plain.*".into()))
@@ -582,6 +582,76 @@ async fn test_write_error_classification() {
                 other => panic!("test '{}': expected Err::Server, got {:?}", tc.name, other),
             }
         }
+
+        _m.assert_async().await;
+    }
+}
+
+#[tokio::test]
+async fn test_v2_precision() {
+    struct V2PrecisionCase {
+        url_encode: &'static str,
+        precision: Precision,
+    }
+
+    let precision_cases = vec![
+        V2PrecisionCase {
+            url_encode: "ns",
+            precision: Precision::Nanosecond,
+        },
+        V2PrecisionCase {
+            url_encode: "us",
+            precision: Precision::Microsecond,
+        },
+        V2PrecisionCase {
+            url_encode: "ms",
+            precision: Precision::Millisecond,
+        },
+        V2PrecisionCase {
+            url_encode: "s",
+            precision: Precision::Second,
+        },
+    ];
+
+    for case in precision_cases {
+        let mut server = Server::new_async().await;
+
+        let _m = server
+            .mock("POST", "/api/v2/write")
+            .match_query(Matcher::AllOf(vec![Matcher::UrlEncoded(
+                "precision".into(),
+                case.url_encode.into(),
+            )]))
+            .with_status(204)
+            .expect_at_least(1)
+            .create_async()
+            .await;
+
+        let write_options = WriteOptions {
+            precision: case.precision,
+            default_tags: Default::default(),
+            gzip_threshold: None,
+            no_sync: false,
+            accept_partial: false,
+            use_v2_api: true,
+            tag_order: vec![],
+            batch_size: 0,
+            max_inflight: 0,
+        };
+
+        let client = Client::new(
+            ClientConfig::builder()
+                .host(server.url())
+                .database("testdb")
+                .token("test-token")
+                .write_options(write_options)
+                .build()
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let _ = client.write("cpu usage=1.0").await;
 
         _m.assert_async().await;
     }
