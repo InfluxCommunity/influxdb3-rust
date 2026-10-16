@@ -92,7 +92,7 @@ impl FlightService for CapturingFlightService {
         self.do_get_calls.fetch_add(1, Ordering::SeqCst);
         if self
             .failures_remaining
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
                 if remaining > 0 {
                     Some(remaining - 1)
                 } else {
