@@ -12,6 +12,7 @@ use arrow_schema::SchemaRef;
 use bytes::Bytes;
 use futures_util::{Stream, TryStreamExt};
 use serde_json::{json, Value as JsonValue};
+use tonic::transport::Identity;
 use tonic::{
     metadata::MetadataValue,
     transport::{Channel, ClientTlsConfig, Endpoint},
@@ -39,6 +40,8 @@ impl FlightQueryClient {
         token: Option<&str>,
         auth_scheme: &str,
         ssl_roots_path: Option<&str>,
+        client_cert_path: Option<&str>,
+        client_key_path: Option<&str>,
         connect_timeout: Duration,
     ) -> Result<Self, Error> {
         let parsed = Url::parse(host_url)?;
@@ -66,6 +69,17 @@ impl FlightQueryClient {
                     .map_err(|e| Error::Config(format!("cannot read SSL roots '{path}': {e}")))?;
                 let cert = tonic::transport::Certificate::from_pem(pem);
                 tls_config = tls_config.ca_certificate(cert);
+            }
+            if let Some(path) = client_cert_path {
+                let client_cert = std::fs::read(path).map_err(|e| {
+                    Error::Config(format!("cannot read client certificate '{path}': {e}"))
+                })?;
+
+                // TODO handle this upwrap properly
+                let client_key = std::fs::read(client_key_path.unwrap())
+                    .map_err(|e| Error::Config(format!("cannot read client key '{path}': {e}")))?;
+
+                tls_config = tls_config.identity(Identity::from_pem(client_cert, client_key));
             }
             endpoint.tls_config(tls_config)?
         } else {

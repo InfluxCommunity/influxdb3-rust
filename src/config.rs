@@ -40,6 +40,14 @@ pub struct ClientConfig {
     /// Path to a PEM file with additional CA roots for TLS verification.
     pub ssl_roots_path: Option<String>,
 
+    /// Path to a client certificate file for client verification.
+    pub client_cert_path: Option<String>,
+
+    /// Path to a client key file for client verification.
+    /// If certificate and key file bundled in a .pem file then pass
+    /// to client_key_path the same path you passed in client_cert_path.
+    pub client_key_path: Option<String>,
+
     /// HTTP proxy URL.
     pub proxy: Option<String>,
 
@@ -69,6 +77,8 @@ impl Default for ClientConfig {
             retry: RetryConfig::default(),
             headers: HeaderMap::new(),
             ssl_roots_path: None,
+            client_cert_path: None,
+            client_key_path: None,
             proxy: None,
             write_timeout: Duration::from_secs(30),
             query_timeout: Duration::from_secs(60),
@@ -329,6 +339,16 @@ impl ClientConfigBuilder {
 
     pub fn ssl_roots_path(mut self, path: impl Into<String>) -> Self {
         self.cfg.ssl_roots_path = Some(path.into());
+        self
+    }
+
+    pub fn client_cert_path(mut self, path: impl Into<String>) -> Self {
+        self.cfg.client_cert_path = Some(path.into());
+        self
+    }
+
+    pub fn client_key_path(mut self, path: impl Into<String>) -> Self {
+        self.cfg.client_key_path = Some(path.into());
         self
     }
 

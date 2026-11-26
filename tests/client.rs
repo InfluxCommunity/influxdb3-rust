@@ -1,6 +1,15 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+mod test_utils;
 
 use influxdb3_client::{Client, ClientConfig, Error, Point, Precision, Row, Value, WriteOptions};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use test_utils::{
+    error_chain, generate_certs, start_secure_query_server, start_secure_write_server,
+    CapturingFlightService, TestCerts,
+};
+use tokio::net::TcpListener;
+use tonic::transport::server::TcpIncoming;
 
 const MEASUREMENT: &str = "rust_e2e";
 const LOCATION: &str = "sun-valley-1";
@@ -242,6 +251,198 @@ async fn write_and_query_data_with_v2_precision() -> Result<(), Box<dyn std::err
     );
 
     Ok(())
+}
+
+struct TlsTest {
+    name: &'static str,
+    server_cert_path: String,
+    client_cert_path: Option<String>,
+    client_key_path: Option<String>,
+    require_client_auth: bool,
+    expect_fail: bool,
+}
+
+#[tokio::test]
+async fn write_with_secure_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let _ = rustls::crypto::ring::default_provider().install_default(); // pick one provider explicitly
+
+    let generated_certs = generate_certs();
+    for test_case in get_tls_test_cases(&generated_certs) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        listener.set_nonblocking(true)?;
+        let port = listener.local_addr()?.port();
+
+        let handler = start_secure_write_server(
+            listener,
+            &generated_certs.ca_cert_path,
+            &generated_certs.server_cert_path,
+            &generated_certs.server_key_path,
+            test_case.require_client_auth,
+        )
+        .await;
+
+        let mut builder = ClientConfig::builder()
+            .host(format!("https://localhost:{port}"))
+            .token("TEST_TOKEN")
+            .database("db")
+            .ssl_roots_path(test_case.server_cert_path)
+            .query_timeout(Duration::from_secs(5));
+
+        if let Some(path) = test_case.client_cert_path {
+            builder = builder.client_cert_path(path);
+            if let Some(path) = test_case.client_key_path {
+                builder = builder.client_key_path(path);
+            }
+        }
+        let client = Client::new(builder.build()?).await?;
+        if test_case.expect_fail {
+            let err = client.write("cpu usage=1.0").await.unwrap_err();
+            let chain = error_chain(&err);
+            assert!(
+                chain.contains("invalid peer certificate")
+                    || chain.contains("UnknownIssuer")
+                    || chain.contains("alert")
+                    || chain.contains("certificate"),
+                "[{}] expected TLS/mTLS cert failure, chain: {chain}",
+                test_case.name
+            );
+        } else {
+            client.write("cpu usage=1.0").await?;
+        }
+        handler.abort();
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn query_with_secure_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let _ = rustls::crypto::ring::default_provider().install_default(); // pick one provider explicitly
+
+    let generated_certs = generate_certs();
+    for test_case in get_tls_test_cases(&generated_certs) {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let port = listener.local_addr()?.port();
+        let incoming = TcpIncoming::from(listener);
+
+        let do_get_calls = Arc::new(AtomicUsize::new(0));
+        let service = CapturingFlightService::new(
+            Arc::new(Mutex::new(None)),
+            Arc::clone(&do_get_calls),
+            Arc::new(AtomicUsize::new(0)),
+        );
+        let server = start_secure_query_server(
+            &generated_certs.server_cert_path,
+            &generated_certs.server_key_path,
+            &generated_certs.ca_cert_path,
+            incoming,
+            service,
+            test_case.require_client_auth,
+        );
+
+        let mut builder = ClientConfig::builder()
+            .host(format!("https://localhost:{port}"))
+            .token("TEST_TOKEN")
+            .database("db")
+            .ssl_roots_path(test_case.server_cert_path)
+            .query_timeout(Duration::from_secs(5));
+
+        if let Some(path) = test_case.client_cert_path {
+            builder = builder.client_cert_path(path);
+            if let Some(path) = test_case.client_key_path {
+                builder = builder.client_key_path(path);
+            }
+        }
+        let client = Client::new(builder.build()?).await?;
+        if test_case.expect_fail {
+            let err = client
+                .sql("SELECT * FROM test")
+                .stream()
+                .await
+                .err()
+                .unwrap();
+            let chain = error_chain(&err);
+            assert!(
+                chain.contains("invalid peer certificate")
+                    || chain.contains("UnknownIssuer")
+                    || chain.contains("alert")
+                    || chain.contains("InvalidCertificate")
+                    || chain.contains("certificate"),
+                "[{}] expected TLS/mTLS cert failure, chain: {chain}",
+                test_case.name
+            );
+        } else {
+            let stream = client.sql("SELECT * FROM test").stream().await?;
+            drop(stream);
+            assert_eq!(do_get_calls.load(Ordering::SeqCst), 1);
+        }
+
+        server
+            .shutdown()
+            .await
+            .expect("Shutdown Flight server failed");
+    }
+    Ok(())
+}
+
+fn get_tls_test_cases(test_certs: &TestCerts) -> Vec<TlsTest> {
+    Vec::from([
+        TlsTest {
+            name: "tls success with correct server certificate",
+            server_cert_path: test_certs.ca_cert_path.clone(),
+            client_cert_path: None,
+            client_key_path: None,
+            require_client_auth: false,
+            expect_fail: false,
+        },
+        TlsTest {
+            name: "tls fail with incorrect server certificate",
+            server_cert_path: test_certs.client_cert_path.clone(),
+            client_cert_path: None,
+            client_key_path: None,
+            require_client_auth: false,
+            expect_fail: true,
+        },
+        TlsTest {
+            name: "mtls success with correct client and server certificates",
+            server_cert_path: test_certs.ca_cert_path.clone(),
+            client_cert_path: Some(test_certs.client_cert_path.clone()),
+            client_key_path: Some(test_certs.client_key_path.clone()),
+            require_client_auth: true,
+            expect_fail: false,
+        },
+        TlsTest {
+            name: "mtls success with correct client cert and key bundled inside .pem",
+            server_cert_path: test_certs.ca_cert_path.clone(),
+            client_cert_path: Some(test_certs.client_pem_path.clone()),
+            client_key_path: Some(test_certs.client_pem_path.clone()),
+            require_client_auth: true,
+            expect_fail: false,
+        },
+        TlsTest {
+            name: "mtls failed with incorrect client cert and key bundled inside .pem",
+            server_cert_path: test_certs.ca_cert_path.clone(),
+            client_cert_path: Some(test_certs.server_pem_path.clone()),
+            client_key_path: Some(test_certs.server_pem_path.clone()),
+            require_client_auth: true,
+            expect_fail: true,
+        },
+        TlsTest {
+            name: "mtls fail with incorrect client certificates",
+            server_cert_path: test_certs.ca_cert_path.clone(),
+            client_cert_path: Some(test_certs.server_cert_path.clone()),
+            client_key_path: Some(test_certs.server_key_path.clone()),
+            require_client_auth: true,
+            expect_fail: true,
+        },
+        TlsTest {
+            name: "mtls fail without a client certificate",
+            server_cert_path: test_certs.ca_cert_path.clone(),
+            client_cert_path: None,
+            client_key_path: None,
+            require_client_auth: true,
+            expect_fail: true,
+        },
+    ])
 }
 
 async fn query_written_point(

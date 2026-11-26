@@ -1,18 +1,3 @@
-use bytes::Bytes;
-use futures_util::stream::{self, StreamExt, TryStreamExt};
-use reqwest::{
-    header::{AUTHORIZATION, CONTENT_ENCODING, CONTENT_TYPE, RETRY_AFTER},
-    Client as HttpClient, ClientBuilder, Response,
-};
-use serde_json::Value;
-use std::collections::HashMap;
-use std::future::IntoFuture;
-use std::io::Write as IoWrite;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::sync::OnceCell;
-
 use crate::{
     config::ClientConfig,
     error::{Error, LineError, PartialWriteError},
@@ -23,6 +8,21 @@ use crate::{
     write::{WriteInput, WriteOptions},
     Result,
 };
+use bytes::Bytes;
+use futures_util::stream::{self, StreamExt, TryStreamExt};
+use reqwest::{
+    header::{AUTHORIZATION, CONTENT_ENCODING, CONTENT_TYPE, RETRY_AFTER},
+    Client as HttpClient, ClientBuilder, Identity, Response,
+};
+use serde_json::Value;
+use std::collections::HashMap;
+use std::fs;
+use std::future::IntoFuture;
+use std::io::Write as IoWrite;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::OnceCell;
 
 /// Async client for InfluxDB 3 Core and Enterprise.
 ///
@@ -132,6 +132,8 @@ impl Client {
                     self.config.token.as_deref(),
                     &self.config.auth_scheme,
                     self.config.ssl_roots_path.as_deref(),
+                    self.config.client_cert_path.as_deref(),
+                    self.config.client_key_path.as_deref(),
                     self.config.query_timeout,
                 )
                 .await
@@ -499,14 +501,53 @@ fn build_http_client(config: &ClientConfig) -> Result<HttpClient> {
     }
 
     if let Some(roots_path) = &config.ssl_roots_path {
-        let pem = std::fs::read(roots_path)
+        let pem = fs::read(roots_path)
             .map_err(|e| Error::Config(format!("cannot read SSL roots '{roots_path}': {e}")))?;
         let cert = reqwest::tls::Certificate::from_pem(&pem)
             .map_err(|e| Error::Config(format!("invalid SSL roots PEM: {e}")))?;
         builder = builder.add_root_certificate(cert);
     }
 
+    if let Some(client_cert_path) = &config.client_cert_path {
+        let client_key_path = config.client_key_path.as_ref().ok_or_else(|| {
+            Error::Config("client_key_path is required when client_cert_path is set".into())
+        })?;
+        let identity = get_client_identity(client_cert_path, client_key_path)?;
+        builder = builder.identity(identity);
+    }
+
     Ok(builder.build()?)
+}
+
+fn get_client_identity(client_cert_path: &str, client_key_path: &str) -> Result<Identity> {
+    let mut cert = fs::read(client_cert_path).map_err(|e| {
+        Error::Config(format!(
+            "cannot read client_cert_path '{client_cert_path}': {e}"
+        ))
+    })?;
+    if client_key_path != client_cert_path {
+        let key = fs::read(client_key_path).map_err(|e| {
+            Error::Config(format!(
+                "cannot read client_key_path '{client_key_path}': {e}"
+            ))
+        })?;
+
+        if !cert.ends_with(b"\n") {
+            cert.push(b'\n');
+        }
+        cert.extend_from_slice(&key);
+
+        let identity = Identity::from_pem(&cert)?;
+        return Ok(identity);
+    }
+
+    let identity = Identity::from_pem(cert.as_ref()).map_err(|e| {
+        Error::Config(format!(
+            "cannot read client_cert_path '{client_cert_path}': {e}"
+        ))
+    })?;
+
+    Ok(identity)
 }
 
 /// Threshold above which gzip compression runs on a blocking thread pool.
