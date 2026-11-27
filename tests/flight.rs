@@ -157,7 +157,7 @@ async fn query_stream_works_over_tls() -> Result<(), Box<dyn std::error::Error +
             .host(format!("https://localhost:{port}"))
             .token("TEST_TOKEN")
             .database("db")
-            .ssl_roots_path(generated_certs.ca_cert_path)
+            .ssl_roots_path(&generated_certs.ca_cert_path)
             .query_timeout(Duration::from_secs(5))
             .build()?,
     )
@@ -173,5 +173,6 @@ async fn query_stream_works_over_tls() -> Result<(), Box<dyn std::error::Error +
         .shutdown()
         .await
         .expect("Shutdown Flight server failed");
+    generated_certs.remove_temp_dirs();
     Ok(())
 }

@@ -284,6 +284,18 @@ pub struct TestCerts {
     pub client_pem_path: String,
 }
 
+impl TestCerts {
+    pub fn remove_temp_dirs(&self) {
+        std::fs::remove_file(&self.ca_cert_path).unwrap();
+        std::fs::remove_file(&self.server_cert_path).unwrap();
+        std::fs::remove_file(&self.server_key_path).unwrap();
+        std::fs::remove_file(&self.server_pem_path).unwrap();
+        std::fs::remove_file(&self.client_cert_path).unwrap();
+        std::fs::remove_file(&self.client_key_path).unwrap();
+        std::fs::remove_file(&self.client_pem_path).unwrap();
+    }
+}
+
 struct LeafPaths {
     cert_path: String,
     key_path: String,

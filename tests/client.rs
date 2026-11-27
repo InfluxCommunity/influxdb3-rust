@@ -311,6 +311,7 @@ async fn write_with_secure_server() -> Result<(), Box<dyn std::error::Error + Se
         }
         handler.abort();
     }
+    generated_certs.remove_temp_dirs();
     Ok(())
 }
 
@@ -381,6 +382,7 @@ async fn query_with_secure_server() -> Result<(), Box<dyn std::error::Error + Se
             .await
             .expect("Shutdown Flight server failed");
     }
+    generated_certs.remove_temp_dirs();
     Ok(())
 }
 
