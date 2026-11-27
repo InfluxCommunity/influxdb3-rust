@@ -75,7 +75,6 @@ impl FlightQueryClient {
                     Error::Config(format!("cannot read client certificate '{path}': {e}"))
                 })?;
 
-                // TODO handle this upwrap properly
                 let client_key = std::fs::read(client_key_path.unwrap())
                     .map_err(|e| Error::Config(format!("cannot read client key '{path}': {e}")))?;
 

@@ -180,10 +180,9 @@ pub async fn start_secure_write_server(
     let server_certs = load_certs(server_cert_path);
     let server_key = load_private_key(server_key_path);
 
-    // TODO refactor this
-    let app = Router::new().route("/api/v2/write", post(|| async { "Hello, mTLS!" }));
+    let app = Router::new().route("/api/v2/write", post(|| async { "Ok" }));
     println!(
-        "mTLS server listening on https://{}",
+        "server listening on https://{}",
         listener.local_addr().unwrap()
     );
 
