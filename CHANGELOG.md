@@ -2,6 +2,10 @@
 
 ## 0.4.0 [unreleased]
 
+### Features
+
+1. [#89](https://github.com/InfluxCommunity/influxdb3-rust/pull/89): Add support for mTLS.
+
 ### Bug Fixes
 
 1. [#69](https://github.com/InfluxCommunity/influxdb3-rust/pull/69): Set the correct write precision string when calling the V2 API.

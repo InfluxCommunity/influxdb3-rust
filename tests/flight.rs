@@ -1,3 +1,4 @@
+mod test_utils;
 use std::{
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -6,23 +7,11 @@ use std::{
     time::Duration,
 };
 
-use arrow_flight::{
-    flight_service_server::{FlightService, FlightServiceServer},
-    Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
-    HandshakeRequest, HandshakeResponse, PollInfo, PutResult, Result as FlightResult, SchemaResult,
-    Ticket,
-};
-use futures_util::stream::Empty as EmptyStream;
+use arrow_flight::flight_service_server::FlightServiceServer;
 use influxdb3_client::{Client, ClientConfig, RetryConfig};
-use rcgen::CertifiedKey;
+use test_utils::*;
 use tokio::{net::TcpListener, sync::oneshot};
-use tonic::{
-    metadata::MetadataMap,
-    transport::{server::TcpIncoming, Identity, Server, ServerTlsConfig},
-    Request, Response, Status,
-};
-
-type MockStream<T> = EmptyStream<std::result::Result<T, Status>>;
+use tonic::transport::{server::TcpIncoming, Server};
 
 fn fast_retry(max_retries: u32) -> RetryConfig {
     RetryConfig {
@@ -33,118 +22,15 @@ fn fast_retry(max_retries: u32) -> RetryConfig {
     }
 }
 
-#[derive(Clone)]
-struct CapturingFlightService {
-    metadata: Arc<Mutex<Option<MetadataMap>>>,
-    do_get_calls: Arc<AtomicUsize>,
-    failures_remaining: Arc<AtomicUsize>,
-}
-
-#[tonic::async_trait]
-impl FlightService for CapturingFlightService {
-    type HandshakeStream = MockStream<HandshakeResponse>;
-    type ListFlightsStream = MockStream<FlightInfo>;
-    type DoGetStream = MockStream<FlightData>;
-    type DoPutStream = MockStream<PutResult>;
-    type DoExchangeStream = MockStream<FlightData>;
-    type DoActionStream = MockStream<FlightResult>;
-    type ListActionsStream = MockStream<ActionType>;
-
-    async fn handshake(
-        &self,
-        _request: Request<tonic::Streaming<HandshakeRequest>>,
-    ) -> std::result::Result<Response<Self::HandshakeStream>, Status> {
-        Err(Status::unimplemented("handshake"))
-    }
-
-    async fn list_flights(
-        &self,
-        _request: Request<Criteria>,
-    ) -> std::result::Result<Response<Self::ListFlightsStream>, Status> {
-        Err(Status::unimplemented("list_flights"))
-    }
-
-    async fn get_flight_info(
-        &self,
-        _request: Request<FlightDescriptor>,
-    ) -> std::result::Result<Response<FlightInfo>, Status> {
-        Err(Status::unimplemented("get_flight_info"))
-    }
-
-    async fn poll_flight_info(
-        &self,
-        _request: Request<FlightDescriptor>,
-    ) -> std::result::Result<Response<PollInfo>, Status> {
-        Err(Status::unimplemented("poll_flight_info"))
-    }
-
-    async fn get_schema(
-        &self,
-        _request: Request<FlightDescriptor>,
-    ) -> std::result::Result<Response<SchemaResult>, Status> {
-        Err(Status::unimplemented("get_schema"))
-    }
-
-    async fn do_get(
-        &self,
-        request: Request<Ticket>,
-    ) -> std::result::Result<Response<Self::DoGetStream>, Status> {
-        self.do_get_calls.fetch_add(1, Ordering::SeqCst);
-        if self
-            .failures_remaining
-            .try_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
-                if remaining > 0 {
-                    Some(remaining - 1)
-                } else {
-                    None
-                }
-            })
-            .is_ok()
-        {
-            return Err(Status::unavailable("transient query failure"));
-        }
-        *self.metadata.lock().unwrap() = Some(request.metadata().clone());
-        Ok(Response::new(futures_util::stream::empty()))
-    }
-
-    async fn do_put(
-        &self,
-        _request: Request<tonic::Streaming<FlightData>>,
-    ) -> std::result::Result<Response<Self::DoPutStream>, Status> {
-        Err(Status::unimplemented("do_put"))
-    }
-
-    async fn do_exchange(
-        &self,
-        _request: Request<tonic::Streaming<FlightData>>,
-    ) -> std::result::Result<Response<Self::DoExchangeStream>, Status> {
-        Err(Status::unimplemented("do_exchange"))
-    }
-
-    async fn do_action(
-        &self,
-        _request: Request<Action>,
-    ) -> std::result::Result<Response<Self::DoActionStream>, Status> {
-        Err(Status::unimplemented("do_action"))
-    }
-
-    async fn list_actions(
-        &self,
-        _request: Request<Empty>,
-    ) -> std::result::Result<Response<Self::ListActionsStream>, Status> {
-        Err(Status::unimplemented("list_actions"))
-    }
-}
-
 #[tokio::test]
 async fn query_stream_sends_metadata_headers(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let metadata = Arc::new(Mutex::new(None));
-    let service = CapturingFlightService {
-        metadata: Arc::clone(&metadata),
-        do_get_calls: Arc::new(AtomicUsize::new(0)),
-        failures_remaining: Arc::new(AtomicUsize::new(0)),
-    };
+    let service = CapturingFlightService::new(
+        Arc::clone(&metadata),
+        Arc::new(AtomicUsize::new(0)),
+        Arc::new(AtomicUsize::new(0)),
+    );
 
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
@@ -197,11 +83,11 @@ async fn query_stream_sends_metadata_headers(
 async fn query_stream_retries_transient_flight_errors(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let do_get_calls = Arc::new(AtomicUsize::new(0));
-    let service = CapturingFlightService {
-        metadata: Arc::new(Mutex::new(None)),
-        do_get_calls: Arc::clone(&do_get_calls),
-        failures_remaining: Arc::new(AtomicUsize::new(1)),
-    };
+    let service = CapturingFlightService::new(
+        Arc::new(Mutex::new(None)),
+        Arc::clone(&do_get_calls),
+        Arc::new(AtomicUsize::new(1)),
+    );
 
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
@@ -244,45 +130,34 @@ async fn query_stream_retries_transient_flight_errors(
 
 #[tokio::test]
 async fn query_stream_works_over_tls() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let _ = rustls::crypto::ring::default_provider().install_default(); // pick one provider explicitly
+
     let do_get_calls = Arc::new(AtomicUsize::new(0));
-    let service = CapturingFlightService {
-        metadata: Arc::new(Mutex::new(None)),
-        do_get_calls: Arc::clone(&do_get_calls),
-        failures_remaining: Arc::new(AtomicUsize::new(0)),
-    };
+    let service = CapturingFlightService::new(
+        Arc::new(Mutex::new(None)),
+        Arc::clone(&do_get_calls),
+        Arc::new(AtomicUsize::new(0)),
+    );
 
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
     let incoming = TcpIncoming::from(listener);
-
-    // Self-signed cert for `localhost`; the SAN must match the host the client
-    // connects to, otherwise tonic rejects the certificate.
-    let CertifiedKey { cert, signing_key } =
-        rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
-    let cert_pem = cert.pem();
-    let key_pem = signing_key.serialize_pem();
-
-    // The client trusts the server cert via a CA roots file (same PEM).
-    let ca_path = std::env::temp_dir().join(format!("influxdb3-tls-test-{port}.pem"));
-    std::fs::write(&ca_path, &cert_pem)?;
-
-    let (shutdown_tx, shutdown_rx) = oneshot::channel();
-    let server = tokio::spawn(async move {
-        Server::builder()
-            .tls_config(ServerTlsConfig::new().identity(Identity::from_pem(cert_pem, key_pem)))?
-            .add_service(FlightServiceServer::new(service))
-            .serve_with_incoming_shutdown(incoming, async {
-                let _ = shutdown_rx.await;
-            })
-            .await
-    });
+    let generated_certs = generate_certs();
+    let server = start_secure_query_server(
+        &generated_certs.server_cert_path,
+        &generated_certs.server_key_path,
+        &generated_certs.ca_cert_path,
+        incoming,
+        service,
+        false,
+    );
 
     let client = Client::new(
         ClientConfig::builder()
             .host(format!("https://localhost:{port}"))
             .token("TEST_TOKEN")
             .database("db")
-            .ssl_roots_path(ca_path.to_string_lossy().into_owned())
+            .ssl_roots_path(&generated_certs.ca_cert_path)
             .query_timeout(Duration::from_secs(5))
             .build()?,
     )
@@ -294,9 +169,10 @@ async fn query_stream_works_over_tls() -> Result<(), Box<dyn std::error::Error +
     drop(stream);
     assert_eq!(do_get_calls.load(Ordering::SeqCst), 1);
 
-    let _ = std::fs::remove_file(&ca_path);
-    shutdown_tx.send(()).unwrap();
-    server.await??;
-
+    server
+        .shutdown()
+        .await
+        .expect("Shutdown Flight server failed");
+    generated_certs.remove_temp_dirs();
     Ok(())
 }
